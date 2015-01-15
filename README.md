@@ -7,6 +7,12 @@
 - demo: Code and script for demo
  -- demo.c is a conjured up test file for the checker
 
+#### Pre-requisites
+
+- LLVM source code
+- LLVM binaries built from source code
+- GCC >= 4.7 (Tested with 4.8.x)
+
 #### Build instructions
 
 ```bash
