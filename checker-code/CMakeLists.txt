@@ -1,7 +1,7 @@
 cmake_minimum_required (VERSION 2.8)
 
 project (my-first-checker)
-set(CMAKE_BUILD_TYPE Release)
+#set(CMAKE_BUILD_TYPE Release)
 
 # Set up relavant paths
 
