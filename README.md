@@ -29,6 +29,16 @@ cd demo
 ./demo.sh ../checker-code/build/libmy-first-checker.so alpha.security.myfirstchecker
 ```
 
+#### Optional
+
+It's always nice to have an IDE setup to make checker development enjoyable. To set one up, do the following *instead* of doing a `cmake` as mentioned in the build instructions:
+
+```bash
+cmake -D_ECLIPSE_VERSION=4.3 -DCMAKE_BUILD_TYPE=Debug -G "Eclipse CDT4 - Ninja" ../
+```
+
+Then, in Eclipse, File->Import->Existing Project-> <BUILD_DIR>. You can then build project in eclipse to compile the shared library in the build folder.
+
 #### Credits
 
 - A template created out of [awruef's find-heartbleed plugin][1]
