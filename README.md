@@ -10,7 +10,8 @@
 #### Pre-requisites
 
 - LLVM source code
-- LLVM binaries built from source code
+- Clang binary built from LLVM source code
+- Prebuilt scan-build and scan-view binaries that are present in LLVM source tree
 - GCC >= 4.7 (Tested with 4.8.x)
 
 #### Build instructions
@@ -28,6 +29,10 @@ cmake ..; make
 cd demo
 ./demo.sh ../checker-code/build/libmy-first-checker.so alpha.security.myfirstchecker
 ```
+
+FIXME: 
+
+- Binary paths in `demo.sh` are hard-coded.
 
 #### Optional
 
