@@ -12,11 +12,8 @@
 //===----------------------------------------------------------------------===//
  */
 
-#include "ClangSACheckers.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
-#include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/CheckerRegistry.h"
-#include "clang/StaticAnalyzer/Core/CheckerManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 
 using namespace clang;
@@ -35,9 +32,15 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *B,
                                      CheckerContext &C) const {
 
 
-  /* We would need to catch stuff like:
-   * var += exp;
+  /* Insert checker logic here */
+
+  /* I intended my first checker to catch integer overflows. We need to:
+   * - Examine statements with the add assign operator
+   * - Check if the addition results in an overflow (Not sure if this is the best way to look for overflows)
+   * e.g., var += exp; Is var+exp > Range of var's data-type
    */
+
+  /* Return if binop is not addassign */
   if(B->getOpcode() != BO_AddAssign)
      return;
 
@@ -45,8 +48,13 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *B,
    * r = Range of data type of var
    * if var + exp > r
    */
+  Expr exp = B->getRHS();
+  
+  // TODO : Write the checker!
 
-
+  /* This is useless at the moment
+   * Retained sink code for template's sake
+   */
   if (ExplodedNode *N = C.addTransition()) {
     if (!BT)
       BT.reset(
