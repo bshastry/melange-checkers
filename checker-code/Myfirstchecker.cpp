@@ -48,7 +48,6 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *B,
    * r = Range of data type of var
    * if var + exp > r
    */
-  Expr exp = B->getRHS();
   
   // TODO : Write the checker!
 
