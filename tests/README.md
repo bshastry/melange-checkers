@@ -4,7 +4,7 @@ Directory for tests that clang analyzer fails; might optionally contain tests th
 
 - `uninitialized-var` contains test cases for use of uninitialized variable
 
-#### Naming convention of test files
+#### Naming convention for test files
 
 (pass/fail)-cxx-(description-of-test).cpp
 
