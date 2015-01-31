@@ -1,6 +1,5 @@
 class foo {
 public:
-        foo();
+        foo() {}
         void bar(int &a);
 };
-
