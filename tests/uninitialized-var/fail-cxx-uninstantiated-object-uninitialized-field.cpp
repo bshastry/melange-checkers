@@ -1,4 +1,4 @@
-/* crbug.com/411177
+/* crbug.com/411177 and 411167
  * This file tests if clang analyzer flags a warning in the following scenario
  * a) Constructor fails to initialize member field
  * b) member field is defined in one member function
