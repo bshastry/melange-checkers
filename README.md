@@ -1,11 +1,13 @@
 #### Directory structure
 
 - checker-code: Source and build dirs for the checker plug-in
- -- Contains source code and a `cmake` file for the checker
- -- Build directory needs to be created
+ - Contains source code and a `cmake` file for the checker
+ - Build directory needs to be created
 
 - demo: Code and script for demo
- -- demo.c is a conjured up test file for the checker
+ - demo.c is a conjured up test file for the checker
+
+- tests: tests that clang analyzer fails
 
 #### Pre-requisites
 
