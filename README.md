@@ -14,6 +14,10 @@
 - Prebuilt scan-build and scan-view binaries that are present in LLVM source tree
 - GCC >= 4.7 (Tested with 4.8.x)
 
+#### Patching cmake file
+
+LLVM Source tree (from trunk) is missing a file called FindLLVM.cmake that the plugin project references. Copy file to $LLVM_SRC/cmake/modules if cmake complains during build.
+
 #### Build instructions
 
 ```bash
