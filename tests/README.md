@@ -1,15 +1,15 @@
 #### Tests
 
-Directory for tests for which clang analyzer fails; might optionally contain tests that pass are interesting nonetheless:
+Directory for tests that clang analyzer fails; might optionally contain tests that pass but are interesting nonetheless:
 
 - `uninitialized-var` contains test cases for use of uninitialized variable
 
-#### Naming convention
+#### Naming convention of test files
 
 (pass/fail)-cxx-(description-of-test).cpp
 
 pass == Test passes i.e., clang analyzer flags warning as expected
-fail == NOT pass => Stuff that is interesting!
+fail == Test fails => Stuff that is interesting!
 cxx == Pertaining to cxx feature e.g., objects
 
 #### Command line
