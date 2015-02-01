@@ -10,6 +10,7 @@ class bar {
 public:
 	foo fooInstance;
 	void call(bool cond);
+	bar() {}
 };
 
 void foo::updateX() {
