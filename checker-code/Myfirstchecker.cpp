@@ -6,8 +6,8 @@
  *
 //===----------------------------------------------------------------------===//
 //
-// This files defines Myfirstchecker, a custom checker that checks for
-// integer overflows on variables.
+// This files defines Myfirstchecker, a custom checker that looks for
+// variable initialization patterns that tend to be buggy
 //
 //===----------------------------------------------------------------------===//
  */
@@ -15,54 +15,219 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/CheckerRegistry.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
+#include "clang/AST/Decl.h"
+#include "clang/AST/DeclTemplate.h"
+#include "llvm/Support/raw_ostream.h"
+
+
 
 using namespace clang;
 using namespace ento;
 
 namespace {
-class Myfirstchecker : public Checker<check::PreStmt<BinaryOperator> > {
+class Myfirstchecker : public Checker< check::ASTDecl<RecordDecl>,
+					check::ASTDecl<FunctionDecl>,
+					check::PreCall,
+					check::PreStmt<CallExpr>,
+					check::EndOfTranslationUnit> {
   mutable std::unique_ptr<BuiltinBug> BT;
+  raw_ostream &os = llvm::errs();
+  /* Registering a map with Program State is useless if we are
+   * working with AST* visitors only.
+   * We create an STL map
+   */
+  mutable std::map<std::string, bool> InitializationStateMap;
 
+  /* Have aggressively registered for checkers here but
+   * won't be using non AST visitors for the time being
+   *
+   * The basic idea is the following:
+   * 1. AST* visitors allow us to
+   * 	a. Do stuff with CXX records and fields there-in
+   * 	b. Do stuff with CXX functions
+   * 2. Therefore, using AST* visitors, we can
+   * 	a. Create an internal map of
+   * 		field members <-> initialization state
+   * 	E.g., x <-> false, y <-> true
+   * 	where x, and y are fields in a CXX record
+   * 	and, the boolean values indicate if they are initialized
+   * 	or not.
+   *    These are tiny steps towards building a heuristics driven
+   *    checker for use of uninitialized variables.
+   * 3. We also register for EOF visitor, so we can spit out warnings
+   * 	at the end of analysis. Since we are dealing with AST*
+   * 	visitors, we don't need to navigate the exploded graph.
+   * 	At the moment, we are only printing contents of the internal
+   * 	map. Warnings are going to replace the debug prints eventually.
+   */
+  /* FIXME: Clean up unused visitors
+   */
 public:
-  void checkPreStmt(const BinaryOperator *B, CheckerContext &C) const;
+  void checkASTDecl(const RecordDecl *RD, AnalysisManager &Mgr,
+                      BugReporter &BR) const;
+  void checkASTDecl(const FunctionDecl *FD, AnalysisManager &Mgr,
+                    BugReporter &BR) const;
+  void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
+  void checkPreStmt(const CallExpr *CE, CheckerContext &C) const;
+  void checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
+				   AnalysisManager &Mgr,
+				   BugReporter &BR) const;
+
+
+  void printFieldsInRecord(RecordDecl::field_iterator start,
+                     RecordDecl::field_iterator end) const;
+
+  void updateStateMap(RecordDecl::field_iterator start,
+                      RecordDecl::field_iterator end) const;
+
+private:
+  void updateStateMapInternal(const std::string key,
+                              const bool value) const;
 };
 }
 
-void Myfirstchecker::checkPreStmt(const BinaryOperator *B,
-                                     CheckerContext &C) const {
+/* Visits the call expression. In the case of CXX object member
+ * functions, the member function call is the call expression.
+ */
+void Myfirstchecker::checkPreStmt(const CallExpr *CE,
+                                  CheckerContext &C) const {
+#if 0
+  os << "\nVisiting Call Expression\n";
+  CE->dump();
+#endif
 
+  return;
+}
 
-  /* Insert checker logic here */
+/* A call back on a call event. Not very useful for us */
+void Myfirstchecker::checkPreCall(const CallEvent &Call,
+				   CheckerContext &C) const {
 
-  /* I intended my first checker to catch integer overflows. We need to:
-   * - Examine statements with the add assign operator
-   * - Check if the addition results in an overflow (Not sure if this is the best way to look for overflows)
-   * e.g., var += exp; Is var+exp > Range of var's data-type
+#if 0
+  os << "\nVisiting Call Event\n";
+  Call.dump();
+#endif
+  return;
+
+}
+
+/* Visit AST nodes for method definitions : CXXMethodDecl is a misnomer
+ * This visitor is not path sensitive
+ */
+void Myfirstchecker::checkASTDecl(const FunctionDecl *FD,
+                                  AnalysisManager &Mgr,
+                                  BugReporter &BR) const {
+
+#if 0
+  os << "\nVisiting Constructor Declaration\n";
+
+  /* Do the following things:
+   * 1. Check if fdecl is a ctor of a cxx object. If yes:
+   *	 a. Check if ctor has member fields. If yes:
+   *	 	i. Check if fields are initialized, warning otherwise
    */
 
-  /* Return if binop is not addassign */
-  if(B->getOpcode() != BO_AddAssign)
-     return;
+  const CXXConstructorDecl *CtorDecl = dyn_cast<CXXConstructorDecl>(FD);
 
-  /* Evaluate
-   * r = Range of data type of var
-   * if var + exp > r
-   */
-  
-  // TODO : Write the checker!
+  if(!CtorDecl)
+    return;
 
-  /* This is useless at the moment
-   * Retained sink code for template's sake
-   */
-  if (ExplodedNode *N = C.addTransition()) {
-    if (!BT)
-      BT.reset(
-          new BuiltinBug(this, "Add assign operator",
-                         "Simply flagging add assign at the moment"));
-    BugReport *R = new BugReport(*BT, BT->getDescription(), N);
-    R->addRange(B->getSourceRange());
-    C.emitReport(R);
+  CtorDecl->dump();
+#endif
+  return;
+}
+
+/* Visit record declarations to create an initial map
+ * of the initialization state of record fields
+ */
+void Myfirstchecker::checkASTDecl(const RecordDecl *RD,
+                                  AnalysisManager &Mgr,
+                                  BugReporter &BR) const {
+
+
+  const CXXRecordDecl *ObjDecl = dyn_cast<CXXRecordDecl>(RD);
+
+  /* Return if not a CXX object declaration */
+  if(!ObjDecl)
+    return;
+
+  /* Return if CXX object has no definition */
+  if(!ObjDecl->hasDefinition())
+    return;
+
+  /* Iterate over member fields of CXX object */
+  RecordDecl::field_iterator fib = ObjDecl->field_begin();
+  RecordDecl::field_iterator fie = ObjDecl->field_end();
+
+  /* Return if CXX object has no member fields */
+  if(fib == fie)
+    return;
+
+  printFieldsInRecord(fib, fie);
+  updateStateMap(fib, fie);
+
+  return;
+}
+
+/* Utility function for debugging purposes */
+void Myfirstchecker::printFieldsInRecord(RecordDecl::field_iterator start,
+                                   RecordDecl::field_iterator end) const {
+
+  /* Iterate over and print member fields of CXX object */
+  for( ;start != end; start++) {
+      FieldDecl *FDecl = *start;
+      os << FDecl->getDeclName().getAsString()
+	  << " has in-class initializer?\t"
+	  << (FDecl->hasInClassInitializer() ? "yes" : "no")
+	  << "\n";
   }
+  return;
+}
+
+/* Function to iterate over member fields of an object
+ * creating an internal representation of their initialization
+ * state.
+ */
+void Myfirstchecker::updateStateMap(RecordDecl::field_iterator start,
+                                   RecordDecl::field_iterator end) const {
+
+  /* Iterate over and map member fields of CXX object to internal
+   * state map */
+  for( ;start != end; start++) {
+      FieldDecl *FDecl = *start;
+      updateStateMapInternal((const std::string)FDecl->getDeclName().getAsString(),
+                             (const bool)FDecl->hasInClassInitializer());
+  }
+  return;
+}
+
+/* Utility function used by updateStateMap */
+void Myfirstchecker::updateStateMapInternal(const std::string key,
+                                    const bool value) const {
+      InitializationStateMap[key] = value;
+}
+
+/* EOF visitor. Spits out the state of the internal map
+ * at the end of analysis
+ */
+void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
+				   AnalysisManager &Mgr,
+				   BugReporter &BR) const {
+
+  os << "Printing state map\n";
+  for(std::map<std::string,bool>::iterator
+      it = InitializationStateMap.begin();
+      it != InitializationStateMap.end(); ++it)
+   {
+    os << (*it).first
+	   << ": "
+	   << (*it).second
+	   << "\n";
+   }
+
+  return;
 }
 
 // Register plugin!
