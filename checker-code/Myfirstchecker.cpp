@@ -122,9 +122,6 @@ void Myfirstchecker::checkASTDecl(const FunctionDecl *FD,
                                   AnalysisManager &Mgr,
                                   BugReporter &BR) const {
 
-#if 0
-  os << "\nVisiting Constructor Declaration\n";
-
   /* Do the following things:
    * 1. Check if fdecl is a ctor of a cxx object. If yes:
    *	 a. Check if ctor has member fields. If yes:
@@ -137,8 +134,27 @@ void Myfirstchecker::checkASTDecl(const FunctionDecl *FD,
   if(!CtorDecl)
     return;
 
-  CtorDecl->dump();
-#endif
+  /* CtorDecl has this magical range-based iterator function */
+  for(auto *I : CtorDecl->inits()){
+      CXXCtorInitializer *CtorInitializer = I;
+      /* FIXME: Choose the right variant(s) of
+       * is*MemberInitializer call
+       */
+      // Check if Ctorinitializer is a member initializer
+      if(!CtorInitializer->isMemberInitializer())
+	continue;
+
+      /* Member field is initialized (in the ctor)
+       * Turns out isMemberInitializer() also returns
+       * member fields initialized in class decl
+       */
+      // Update state map
+      FieldDecl *FD = CtorInitializer->getMember();
+      updateStateMapInternal(
+	  (const std::string)FD->getDeclName().getAsString(),
+	  (const bool)true);
+  }
+
   return;
 }
 
