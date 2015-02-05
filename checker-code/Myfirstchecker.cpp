@@ -36,7 +36,8 @@ class Myfirstchecker : public Checker< check::ASTDecl<RecordDecl>,
   raw_ostream &os = llvm::errs();
   /* Registering a map with Program State is useless if we are
    * working with AST* visitors only.
-   * We create an STL map
+   * We create an STL map. LLVM has its own map implementation
+   * called DenseMap that I got to know about later.
    */
   mutable std::map<std::string, bool> InitializationStateMap;
 
@@ -126,7 +127,8 @@ void Myfirstchecker::checkASTDecl(const FunctionDecl *FD,
   /* Do the following things:
    * 1. Check if fdecl is a ctor of a cxx object. If yes:
    *	 a. Check if ctor has member fields. If yes:
-   *	 	i. Check if fields are initialized, warning otherwise
+   *	 	i. Update state map with initialization
+   *	 		status of member fields
    */
 
   const CXXConstructorDecl *CtorDecl = dyn_cast<CXXConstructorDecl>(FD);
@@ -146,7 +148,10 @@ void Myfirstchecker::checkASTDecl(const RecordDecl *RD,
                                   AnalysisManager &Mgr,
                                   BugReporter &BR) const {
 
-
+  /* We visit RecordDecl in addtion to CXXCtordecl because
+   * the former visits records within records.
+   * This takes care of visiting nested records
+   */
   const CXXRecordDecl *ObjDecl = dyn_cast<CXXRecordDecl>(RD);
 
   /* Return if not a CXX object declaration */
@@ -165,7 +170,7 @@ void Myfirstchecker::checkASTDecl(const RecordDecl *RD,
   if(fib == fie)
     return;
 
-  printFieldsInRecord(fib, fie);
+//  printFieldsInRecord(fib, fie);
   updateStateMap(fib, fie);
 
   return;
@@ -226,7 +231,6 @@ void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 	   << (*it).second
 	   << "\n";
    }
-
   return;
 }
 
