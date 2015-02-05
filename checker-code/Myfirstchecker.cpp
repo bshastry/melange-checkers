@@ -76,14 +76,15 @@ public:
 				   AnalysisManager &Mgr,
 				   BugReporter &BR) const;
 
-
+private:
   void printFieldsInRecord(RecordDecl::field_iterator start,
                      RecordDecl::field_iterator end) const;
+
+  void printStateMap() const;
 
   void updateStateMap(RecordDecl::field_iterator start,
                       RecordDecl::field_iterator end) const;
 
-private:
   void updateStateMapInternal(const std::string key,
                               const bool value) const;
 };
@@ -221,6 +222,12 @@ void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 				   AnalysisManager &Mgr,
 				   BugReporter &BR) const {
 
+  printStateMap();
+
+  return;
+}
+
+void Myfirstchecker::printStateMap() const {
   os << "Printing state map\n";
   for(std::map<std::string,bool>::iterator
       it = InitializationStateMap.begin();
