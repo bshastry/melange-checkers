@@ -26,6 +26,8 @@
 using namespace clang;
 using namespace ento;
 
+typedef std::map<const FieldDecl *, bool> InitializationStateMapTy;
+
 namespace {
 class Myfirstchecker : public Checker< check::ASTDecl<RecordDecl>,
 					check::ASTDecl<FunctionDecl>,
@@ -39,7 +41,7 @@ class Myfirstchecker : public Checker< check::ASTDecl<RecordDecl>,
    * We create an STL map. LLVM has its own map implementation
    * called DenseMap that I got to know about later.
    */
-  mutable std::map<std::string, bool> InitializationStateMap;
+  mutable InitializationStateMapTy InitializationStateMap;
 
   /* Have aggressively registered for checkers here but
    * won't be using non AST visitors for the time being
@@ -85,7 +87,7 @@ private:
   void updateStateMap(RecordDecl::field_iterator start,
                       RecordDecl::field_iterator end) const;
 
-  void updateStateMapInternal(const std::string key,
+  void updateStateMapInternal(const FieldDecl *FDecl,
                               const bool value) const;
 };
 }
@@ -149,10 +151,8 @@ void Myfirstchecker::checkASTDecl(const FunctionDecl *FD,
        * member fields initialized in class decl
        */
       // Update state map
-      FieldDecl *FD = CtorInitializer->getMember();
-      updateStateMapInternal(
-	  (const std::string)FD->getDeclName().getAsString(),
-	  (const bool)true);
+      const FieldDecl *FD = CtorInitializer->getMember();
+      updateStateMapInternal(FD, (const bool)true);
   }
 
   return;
@@ -218,17 +218,17 @@ void Myfirstchecker::updateStateMap(RecordDecl::field_iterator start,
   /* Iterate over and map member fields of CXX object to internal
    * state map */
   for( ;start != end; start++) {
-      FieldDecl *FDecl = *start;
-      updateStateMapInternal((const std::string)FDecl->getDeclName().getAsString(),
-                             (const bool)FDecl->hasInClassInitializer());
+      const FieldDecl *FDecl = *start;
+      const bool isFieldInit = (const bool)FDecl->hasInClassInitializer();
+      updateStateMapInternal(FDecl, isFieldInit);
   }
   return;
 }
 
 /* Utility function used by updateStateMap */
-void Myfirstchecker::updateStateMapInternal(const std::string key,
+void Myfirstchecker::updateStateMapInternal(const FieldDecl *FDecl,
                                     const bool value) const {
-      InitializationStateMap[key] = value;
+      InitializationStateMap[FDecl] = value;
 }
 
 /* EOF visitor. Spits out the state of the internal map
@@ -238,18 +238,44 @@ void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 				   AnalysisManager &Mgr,
 				   BugReporter &BR) const {
 
-  printStateMap();
+//  printStateMap();
+  /* Iterate over state map and report error
+   * on first uninitialized field member
+   */
+  for(InitializationStateMapTy::iterator it=InitializationStateMap.begin();
+      it!=InitializationStateMap.end(); ++it){
+      // Check if fielddecl is uninitialized
+      if(!it->second){
+	  // FDecl is uninitialized
+	  const FieldDecl *FDecl = it->first;
+	  PathDiagnosticLocation PDL =
+	      PathDiagnosticLocation::create(FDecl,
+	                                     Mgr.getSourceManager());
+
+	  StringRef Message = "Object member is uninitialized in Ctor";
+	  StringRef Name = "Uninitialized field";
+	  StringRef Category = " Custom Security ";
+	  SourceRange Sr = FDecl->getSourceRange();
+
+	  BR.EmitBasicReport(FDecl, this, Name, Category,
+	                     Message, PDL, Sr);
+
+	  continue;
+      }
+  }
 
   return;
 }
 
+
+
 void Myfirstchecker::printStateMap() const {
   os << "Printing state map\n";
-  for(std::map<std::string,bool>::iterator
+  for(InitializationStateMapTy::iterator
       it = InitializationStateMap.begin();
       it != InitializationStateMap.end(); ++it)
    {
-    os << (*it).first
+    os << it->first->getDeclName().getAsString()
 	   << ": "
 	   << (*it).second
 	   << "\n";
