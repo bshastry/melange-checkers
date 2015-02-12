@@ -38,6 +38,17 @@ class Myfirstchecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
   mutable const Decl *pDecl = nullptr;
   raw_ostream &os = llvm::errs();
 
+  /* Definitions of cxx member fields of this* object are recorded
+   * in two sets
+   * 	1. ctorInitializedFieldsSet: Fields initialized in ctor
+   * 		initializer list or in-class
+   * 	2. contextInitializedFieldsSet: Fields initialized in
+   * 		this->method() body
+   * ATM, we basically insert fieldnames (strings) of initialized
+   * fields in these sets. To check state of a field at the time
+   * of use, we simply look for the field in these sets. If the
+   * field is in neither set, we flag a warning (Bug Report)
+   */
   mutable InitializedFieldsSetTy ctorInitializedFieldsSet;
   mutable InitializedFieldsSetTy contextInitializedFieldsSet;
 
