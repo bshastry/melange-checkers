@@ -143,12 +143,15 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
    * an implicit type conversion involved
    * Took me a full evening's debugging to figure
    * this out.
+   *
+   * Tip: Use Expr's IgnoreImpCasts to simplify this:
+   * bool isImplicitCast = isa<ImplicitCastExpr>(rhs);
+   * const ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(rhs);
+   * const MemberExpr *MeRHS = isImplicitCast ?
+   *			    cast<MemberExpr>(ICE->getSubExpr()) :
+   *			    nullptr;
    */
-  bool isImplicitCast = isa<ImplicitCastExpr>(rhs);
-  const ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(rhs);
-  const MemberExpr *MeRHS = isImplicitCast ?
-			    cast<MemberExpr>(ICE->getSubExpr()) :
-			    nullptr;
+  const MemberExpr *MeRHS = dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
 
   if(MeLHS)
       prettyPrintE("LHS member exp is", MeLHS, ASTC);
