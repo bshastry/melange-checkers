@@ -35,8 +35,9 @@ class Myfirstchecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<UnaryOperator>,
 					check::EndOfTranslationUnit>
 					{
+  typedef Decl const Decl_const_t;
   mutable std::unique_ptr<BugType> BT;
-  mutable const Decl *pDecl = nullptr;
+  mutable Decl_const_t *pDecl = nullptr;
   raw_ostream &os = llvm::errs();
 
   /* Definitions of cxx member fields of this* object are recorded
