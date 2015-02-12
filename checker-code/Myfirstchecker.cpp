@@ -32,6 +32,7 @@ typedef std::set<std::string> InitializedFieldsSetTy;
 namespace {
 class Myfirstchecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<BinaryOperator>,
+					check::PreStmt<UnaryOperator>,
 					check::EndOfTranslationUnit>
 					{
   mutable std::unique_ptr<BugType> BT;
@@ -80,6 +81,9 @@ public:
                     AnalysisManager &Mgr, BugReporter &BR) const;
   void checkPreStmt(const BinaryOperator *BO,
                     CheckerContext &C) const;
+  void checkPreStmt(const UnaryOperator *UO,
+                      CheckerContext &C) const;
+
   void checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
                                     AnalysisManager &Mgr,
                                     BugReporter &BR) const;
@@ -100,6 +104,48 @@ private:
                                  CheckerContext &C) const;
 };
 } // end of anonymous namespace
+
+void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
+                                  CheckerContext &C) const {
+
+  /* Return if not a logical NOT operator */
+  if(UO->getOpcode() != UO_LNot)
+    return;
+
+  /* Return if not member expression */
+  Expr *E = UO->getSubExpr()->IgnoreImpCasts();
+  MemberExpr *ME = dyn_cast<MemberExpr>(E);
+  if(!ME)
+    return;
+
+  /* Return if member expression has no base
+   * Wonder what this implies
+   */
+  Expr *Base = ME->getBase();
+  if(!Base)
+    return;
+
+
+  /* Return if not cxx this* expression */
+  CXXThisExpr *CTE = dyn_cast<CXXThisExpr>(Base);
+  if(!CTE)
+    return;
+
+  /* Get the field name */
+  const std::string FieldName =
+	ME->getMemberDecl()->getDeclName().getAsString();
+  // Find Fieldname in ctor and context sets
+  if((!findElementInSet(FieldName, &ctorInitializedFieldsSet))
+	&& (!findElementInSet(FieldName, &contextInitializedFieldsSet)))
+  {
+	// Report bug
+	os << "Report bug here\n";
+	StringRef Message = "Potentially uninitialized object field";
+	reportBug(Message, ME->getSourceRange(), C);
+  }
+  return;
+
+}
 
 void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
                                   CheckerContext &C) const {
