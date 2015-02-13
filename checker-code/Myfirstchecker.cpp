@@ -391,6 +391,14 @@ void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
   /* Process body for Bin ops and assignments */
   const Stmt *CS = CtorDecl->getBody();
 
+  /* Chromium code crashed for some reason at
+   * at CS->children(). Turns out getBody is not
+   * guaranteed to return a Stmt. Could also be
+   * a Decl
+   */
+  if(!CS)
+      return;
+
   /* Iterate over statements in body. Note that we
    * are processing assignments in Ctors twice
    * 	1. Once here, while visiting AST nodes
