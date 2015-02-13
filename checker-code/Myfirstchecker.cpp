@@ -34,8 +34,7 @@ typedef std::set<std::string> InitializedFieldsSetTy;
 namespace {
 class Myfirstchecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<BinaryOperator>,
-					check::PreStmt<UnaryOperator>,
-					check::EndOfTranslationUnit>
+					check::PreStmt<UnaryOperator>>
 					{
   typedef Decl const Decl_const_t;
   mutable std::unique_ptr<BugType> BT;
@@ -87,11 +86,6 @@ public:
                     CheckerContext &C) const;
   void checkPreStmt(const UnaryOperator *UO,
                       CheckerContext &C) const;
-
-  void checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
-                                    AnalysisManager &Mgr,
-                                    BugReporter &BR) const;
-
 private:
   void printSetInternal(InitializedFieldsSetTy *Set) const;
 
@@ -454,9 +448,10 @@ bool Myfirstchecker::isElementUndefined(const std::string FName) const {
   return false;
 }
 
-/* EOF visitor. Spits out the state of the internal map
- * at the end of analysis
+/* Used to be EOF visitor. Can be used for debugging purposes
+ * Spits out the state of the internal map at the end of analysis
  */
+#if 0
 void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 				   AnalysisManager &Mgr,
 				   BugReporter &BR) const {
@@ -465,6 +460,7 @@ void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 #endif
   return;
 }
+#endif
 
 void Myfirstchecker::printSetInternal(InitializedFieldsSetTy *Set) const {
 
