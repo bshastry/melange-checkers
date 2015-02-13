@@ -21,7 +21,7 @@
 #include "clang/AST/DeclTemplate.h"
 #include "llvm/Support/raw_ostream.h"
 
-
+#define DEBUG_PRINTS	0
 
 using namespace clang;
 using namespace ento;
@@ -39,6 +39,7 @@ class Myfirstchecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
   mutable std::unique_ptr<BugType> BT;
   mutable Decl_const_t *pDecl = nullptr;
   raw_ostream &os = llvm::errs();
+  enum SetKind { Ctor, Context };
 
   /* Definitions of cxx member fields of this* object are recorded
    * in two sets
@@ -95,7 +96,8 @@ private:
   void updateSetInternal(InitializedFieldsSetTy *Set,
                              const std::string FName) const;
   bool findElementInSet(const std::string FName,
-                        InitializedFieldsSetTy *Set) const;
+                        SetKind S) const;
+  bool isElementUndefined(const std::string Fname) const;
 
   void prettyPrintE(StringRef S, const Expr *E,
 		     ASTContext &ASTC) const;
@@ -103,6 +105,9 @@ private:
 
   void reportBug(StringRef Message, SourceRange SR,
                                  CheckerContext &C) const;
+
+  bool trackMembersInAssign(const BinaryOperator *BO,
+                            SetKind S, ASTContext &ASTC) const;
 };
 } // end of anonymous namespace
 
@@ -132,15 +137,22 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
   if(!CTE)
     return;
 
-  /* Get the field name */
+  /* Get the FQ field name */
+  const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
   const std::string FieldName =
-	ME->getMemberDecl()->getDeclName().getAsString();
-  // Find Fieldname in ctor and context sets
-  if((!findElementInSet(FieldName, &ctorInitializedFieldsSet))
-	&& (!findElementInSet(FieldName, &contextInitializedFieldsSet)))
+		ND->getQualifiedNameAsString();
+//  const std::string FieldName =
+//	ME->getMemberDecl()->getDeclName().getAsString();
+  /* Find Fieldname in ctor and context sets and flag
+   * a warning only if we know for sure that ctor does not
+   * have a body in this translation unit
+   */
+  if(isElementUndefined(FieldName))
   {
 	// Report bug
+#if DEBUG_PRINTS
 	os << "Report bug here\n";
+#endif
 	StringRef Message = "Potentially uninitialized object field";
 	reportBug(Message, ME->getSourceRange(), C);
   }
@@ -179,6 +191,31 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
     contextInitializedFieldsSet.clear();
   }
 
+  /* If we are here, we are analyzing an assignment
+   * statement in a function definition.
+   */
+  bool isDef = trackMembersInAssign(BO, Context, ASTC);
+
+  // Report bug
+  if(!isDef){
+      const Expr *rhs = BO->getRHS();
+      const MemberExpr *MeRHS =
+	  dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
+      	  StringRef Message = "Potentially uninitialized object field";
+      	  reportBug(Message, MeRHS->getSourceRange(), C);
+  }
+
+  return;
+}
+
+/* Utility function to track uses and defs in assignment
+ * statements.
+ * Returns false if RHS is not in defs set. When this
+ * happens, onus is on caller to report bug
+ */
+bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
+                                          SetKind S,
+                                          ASTContext &ASTC) const {
   /* Check if LHS/RHS is a member expression */
   const Expr *lhs = BO->getLHS();
   const Expr *rhs = BO->getRHS();
@@ -200,19 +237,21 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
    */
   const MemberExpr *MeRHS = dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
 
+#if DEBUG_PRINTS
   if(MeLHS)
       prettyPrintE("LHS member exp is", MeLHS, ASTC);
 
-
   if(MeRHS)
       prettyPrintE("RHS member exp is", MeRHS, ASTC);
-
+#endif
 
   /* Return if neither lhs nor rhs is a member expression */
   if(!MeLHS && !MeRHS)
-    return;
+    return true;
 
+#if DEBUG_PRINTS
   os << "Stage 1\n";
+#endif
 
   /* If we are here, it means that a member expression
    * definition/use is taking place.
@@ -228,26 +267,28 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
   // Filter out non this* fields
   if(MeLHS){
       Expr *BaseLHS = MeLHS->getBase();
-//      prettyPrintE("Lhs base is", BaseLHS, ASTC);
       CTELHS = dyn_cast<CXXThisExpr>(BaseLHS);
-      if(CTELHS){
-//	  prettyPrintE("Lhs this expr is", CTELHS, ASTC);
-      }
+#if DEBUG_PRINTS
+      if(CTELHS)
+	  prettyPrintE("Lhs this expr is", CTELHS, ASTC);
+#endif
   }
   if(MeRHS){
       Expr *BaseRHS = MeRHS->getBase();
-//      prettyPrintE("Rhs base is", BaseRHS, ASTC);
       CTERHS = dyn_cast<CXXThisExpr>(BaseRHS);
-      if(CTERHS){
-//  	  prettyPrintE("Rhs this expr is", CTERHS, ASTC);
-      }
+#if DEBUG_PRINTS
+      if(CTERHS)
+  	  prettyPrintE("Rhs this expr is", CTERHS, ASTC);
+#endif
   }
 
   // Return if neither lhs nor rhs is a this->member_expr
   if(!CTELHS && !CTERHS)
-    return;
+    return true;
 
+#if DEBUG_PRINTS
   os << "Stage 2\n";
+#endif
 
   /* If we are here, we can be sure that the member field
    * being defined/used belongs to this* object
@@ -258,28 +299,32 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
    * anything else
    */
   if(CTERHS){
-    const std::string FieldNameRHS =
-	MeRHS->getMemberDecl()->getDeclName().getAsString();
-    // Check for FieldDeclRHS in ctor and context sets
-    if((!findElementInSet(FieldNameRHS, &ctorInitializedFieldsSet))
-	&& (!findElementInSet(FieldNameRHS, &contextInitializedFieldsSet)))
-    {
-	// Report bug
-	os << "Report bug here\n";
-	StringRef Message = "Potentially uninitialized object field";
-	reportBug(Message, MeRHS->getSourceRange(), C);
-    }
+      // Get FQN
+      const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
+      const std::string FieldNameRHS =
+		NDR->getQualifiedNameAsString();
+      // MeRHS->getMemberDecl()->getDeclName().getAsString();
+
+      /* If RHS is not defined, report to caller */
+      if(isElementUndefined(FieldNameRHS))
+	  return false;
   }
 
   // Add lhs to set if it is a this* member
   if(CTELHS){
+      // Add FQN for unique resolution of fields
+      const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
       const std::string FieldNameLHS =
-  	MeLHS->getMemberDecl()->getDeclName().getAsString();
-      os << "Adding Field to context set: " << FieldNameLHS << "\n";
-      updateSetInternal(&contextInitializedFieldsSet, FieldNameLHS);
+	  NDL->getQualifiedNameAsString();
+//  	MeLHS->getMemberDecl()->getDeclName().getAsString();
+#if DEBUG_PRINTS
+      os << "Adding Field to " << (S ? "context set: " : "ctor set: ")
+	  << FieldNameLHS << "\n";
+#endif
+      updateSetInternal(S ? &contextInitializedFieldsSet :
+	  &ctorInitializedFieldsSet, FieldNameLHS);
   }
-
-  return;
+  return true;
 }
 
 void Myfirstchecker::reportBug(StringRef Message,
@@ -332,84 +377,56 @@ void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
        */
       // Update state map
       const FieldDecl *FD = CtorInitializer->getMember();
-      const std::string FName = FD->getDeclName().getAsString();
+      // Get FQN for unique entry
+      const NamedDecl *ND = dyn_cast<NamedDecl>(FD);
+      const std::string FName = ND->getQualifiedNameAsString();
+#if DEBUG_PRINTS
       os << "Adding field to ctor set: " << FName << "\n";
+#endif
       updateSetInternal(&ctorInitializedFieldsSet, FName);
+  }
+
+  /* After looking for member initializers in class and in the
+   * initializer list of ctor, we move on to the ctor body
+   * itself if there is one in this translation unit
+   */
+  if(CtorDecl->hasTrivialBody())
+    return;
+
+  /* Process body for Bin ops and assignments */
+  const Stmt *CS = CtorDecl->getBody();
+
+  /* Iterate over statements in body. Note that we
+   * are processing assignments in Ctors twice
+   * 	1. Once here, while visiting AST nodes
+   * 	2. Again, when statements in Function
+   * 	defintion of ctor are being visited
+   * 	during PreStmt<BinaryOperator>
+   */
+  for(auto *it : CS->children()){
+      /* Bail if statement is not assignment */
+      const BinaryOperator *BO =
+	  dyn_cast<BinaryOperator>(it);
+
+      if(!BO)
+	continue;
+
+      /* Build up def chain
+       * Note:
+       * 1. We don't do anything about
+       * undefined uses of fields in Ctor. The
+       * assumption is that assignments in ctors
+       * are valid.
+       */
+      bool isDef = trackMembersInAssign(BO, Ctor,
+                           Mgr.getASTContext());
+
+      if(!isDef)
+	  os << "Undefined object field in ctor\n";
   }
 
   return;
 }
-
-/* Visit record declarations to create an initial map
- * of the initialization state of record fields
- */
-//void Myfirstchecker::checkASTDecl(const RecordDecl *RD,
-//                                  AnalysisManager &Mgr,
-//                                  BugReporter &BR) const {
-//
-//  /* FIXME: It makes sense to filter out RecordDecls that
-//   * don't have a bearing on the file being analyzed
-//   */
-//
-//  /* We visit RecordDecl in addtion to CXXCtordecl because
-//   * the former visits records within records.
-//   * This takes care of visiting nested records
-//   */
-//  const CXXRecordDecl *ObjDecl = dyn_cast<CXXRecordDecl>(RD);
-//
-//  /* Return if not a CXX object declaration */
-//  if(!ObjDecl)
-//    return;
-//
-//  /* Return if CXX object has no definition */
-//  if(!ObjDecl->hasDefinition())
-//    return;
-//
-//  /* Iterate over member fields of CXX object */
-//  RecordDecl::field_iterator fib = ObjDecl->field_begin();
-//  RecordDecl::field_iterator fie = ObjDecl->field_end();
-//
-//  /* Return if CXX object has no member fields */
-//  if(fib == fie)
-//    return;
-//
-////  printFieldsInRecord(fib, fie);
-//  updateStateMap(fib, fie);
-//
-//  return;
-//}
-
-/* Utility function for debugging purposes */
-//void Myfirstchecker::printFieldsInRecord(RecordDecl::field_iterator start,
-//                                   RecordDecl::field_iterator end) const {
-//
-//  /* Iterate over and print member fields of CXX object */
-//  for( ;start != end; start++) {
-//      FieldDecl *FDecl = *start;
-//      os << FDecl->getDeclName().getAsString()
-//	  << " has in-class initializer?\t"
-//	  << (FDecl->hasInClassInitializer() ? "yes" : "no")
-//	  << "\n";
-//  }
-//  return;
-//}
-
-/* Function to iterate over member fields of an object
- * creating an internal representation of their initialization
- * state.
- */
-//void Myfirstchecker::updateStateMap(RecordDecl::field_iterator start,
-//                                   RecordDecl::field_iterator end) const {
-//
-//  /* Iterate over and map member fields of CXX object to internal
-//   * state map */
-//  for( ;start != end; start++) {
-//      const FieldDecl *FDecl = *start;
-//      if(FDecl->hasInClassInitializer())
-//	updateStateMapInternal(FDecl);
-//  }
-//  return;
-//}
 
 /* Utility function for inserting fields into a given set */
 void Myfirstchecker::updateSetInternal(InitializedFieldsSetTy *Set,
@@ -419,8 +436,21 @@ void Myfirstchecker::updateSetInternal(InitializedFieldsSetTy *Set,
 
 /* Utility function for finding a field in a given set */
 bool Myfirstchecker::findElementInSet(const std::string FName,
-                           InitializedFieldsSetTy *Set) const {
-  return (Set->find(FName) != Set->end());
+                           SetKind S) const {
+  InitializedFieldsSetTy Set =
+      (S ? contextInitializedFieldsSet : ctorInitializedFieldsSet);
+  return (Set.find(FName) != Set.end());
+}
+
+bool Myfirstchecker::isElementUndefined(const std::string FName) const {
+  /* If element is in neither Ctor not context
+   * sets, it's undefined
+   */
+  if(!(findElementInSet(FName, Ctor)) &&
+      !(findElementInSet(FName, Context)))
+      return true;
+
+  return false;
 }
 
 /* EOF visitor. Spits out the state of the internal map
@@ -429,35 +459,9 @@ bool Myfirstchecker::findElementInSet(const std::string FName,
 void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 				   AnalysisManager &Mgr,
 				   BugReporter &BR) const {
-
-  os << "Printing ctor set\n";
+#if DEBUG_PRINTS
   printSetInternal(&ctorInitializedFieldsSet);
-
-//  /* Iterate over state map and report error
-//   * on first uninitialized field member
-//   */
-//  for(InitializationStateMapTy::iterator it=InitializationStateMap.begin();
-//      it!=InitializationStateMap.end(); ++it){
-//      // Check if fielddecl is uninitialized
-//      if(!it->second){
-//	  // FDecl is uninitialized
-//	  const FieldDecl *FDecl = it->first;
-//	  PathDiagnosticLocation PDL =
-//	      PathDiagnosticLocation::create(FDecl,
-//	                                     Mgr.getSourceManager());
-//
-//	  StringRef Message = "Object member is uninitialized in Ctor";
-//	  StringRef Name = "Uninitialized field";
-//	  StringRef Category = " Custom Security ";
-//	  SourceRange Sr = FDecl->getSourceRange();
-//
-//	  BR.EmitBasicReport(FDecl, this, Name, Category,
-//	                     Message, PDL, Sr);
-//
-//	  continue;
-//      }
-//  }
-//
+#endif
   return;
 }
 
