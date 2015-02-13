@@ -26,7 +26,9 @@
 using namespace clang;
 using namespace ento;
 
-// FIXME: Use a unique id instead of Fieldname aka std::string
+/* We track usedefs by fully qualified field names, like so
+ * foo::m_x or mynamespace::foo::m_x
+ */
 typedef std::set<std::string> InitializedFieldsSetTy;
 
 namespace {
@@ -105,7 +107,6 @@ private:
 
   void reportBug(StringRef Message, SourceRange SR,
                                  CheckerContext &C) const;
-
   bool trackMembersInAssign(const BinaryOperator *BO,
                             SetKind S, ASTContext &ASTC) const;
 };
