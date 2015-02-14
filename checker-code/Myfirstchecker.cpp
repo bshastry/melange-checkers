@@ -21,7 +21,8 @@
 #include "clang/AST/DeclTemplate.h"
 #include "llvm/Support/raw_ostream.h"
 
-#define DEBUG_PRINTS	0
+#define DEBUG_PRINTS		0
+#define DEBUG_PRINTS_VERBOSE	0
 
 using namespace clang;
 using namespace ento;
@@ -39,7 +40,6 @@ class Myfirstchecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
   typedef Decl const Decl_const_t;
   mutable std::unique_ptr<BugType> BT;
   mutable Decl_const_t *pDecl = nullptr;
-  raw_ostream &os = llvm::errs();
   enum SetKind { Ctor, Context };
 
   /* Definitions of cxx member fields of this* object are recorded
@@ -156,7 +156,7 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
   {
 	// Report bug
 #if DEBUG_PRINTS
-	os << "Report bug here\n";
+	llvm::errs() << "Report bug here\n";
 #endif
 	StringRef Message = "Potentially uninitialized object field";
 	reportBug(Message, ME->getSourceRange(), C);
@@ -221,8 +221,8 @@ bool Myfirstchecker::skipExpr(const Expr *E) const {
       (ctorHasNoBodyInTUSet.find(CtorName) != ctorHasNoBodyInTUSet.end());
 
 #if DEBUG_PRINTS
-  os << "Ctor Name from Expr is: " << CtorName << "\n";
-  os << "Match "
+  llvm::errs() << "Ctor Name from Expr is: " << NSQCtorName << "\n";
+  llvm::errs() << "Match "
      << (canSkip ? "found. Skipping expression\n" : "not found. Continuing\n");
 #endif
 
@@ -232,9 +232,6 @@ bool Myfirstchecker::skipExpr(const Expr *E) const {
 void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
                                   CheckerContext &C) const {
 
-#if DEBUG_PRINTS
-    os << "Binop Pre Statement visitor\n";
-#endif
   /* Return if binop is not eq. assignment */
   if((BO->getOpcode() != BO_Assign))
     return;
@@ -321,8 +318,10 @@ bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
    *			    nullptr;
    */
   const MemberExpr *MeRHS = dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
-
-#if DEBUG_PRINTS
+#if DEBUG_PRINTS_VERBOSE
+  prettyPrintE("RHS ignore imp casts", rhs->IgnoreImpCasts(), ASTC);
+  prettyPrintE("RHS ignore parens", rhs->IgnoreParens(), ASTC);
+  prettyPrintE("RHS ignore parencasts", rhs->IgnoreParenCasts(), ASTC);
   if(MeLHS)
       prettyPrintE("LHS member exp is", MeLHS, ASTC);
 
@@ -334,8 +333,8 @@ bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
   if(!MeLHS && !MeRHS)
     return true;
 
-#if DEBUG_PRINTS
-  os << "Stage 1\n";
+#if DEBUG_PRINTS_VERBOSE
+  llvm::errs() << "Stage 1\n";
 #endif
 
   /* If we are here, it means that a member expression
@@ -371,8 +370,8 @@ bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
   if(!CTELHS && !CTERHS)
     return true;
 
-#if DEBUG_PRINTS
-  os << "Stage 2\n";
+#if DEBUG_PRINTS_VERBOSE
+  llvm::errs() << "Stage 2\n";
 #endif
 
   /* If we are here, we can be sure that the member field
@@ -388,7 +387,6 @@ bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
       const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
       const std::string FieldNameRHS =
 		NDR->getQualifiedNameAsString();
-      // MeRHS->getMemberDecl()->getDeclName().getAsString();
 
       /* If RHS is not defined, report to caller */
       if(isElementUndefined(FieldNameRHS))
@@ -401,9 +399,8 @@ bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
       const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
       const std::string FieldNameLHS =
 	  NDL->getQualifiedNameAsString();
-//  	MeLHS->getMemberDecl()->getDeclName().getAsString();
 #if DEBUG_PRINTS
-      os << "Adding Field to " << (S ? "context set: " : "ctor set: ")
+      llvm::errs() << "Adding Field to " << (S ? "context set: " : "ctor set: ")
 	  << FieldNameLHS << "\n";
 #endif
       updateSetInternal(S ? &contextInitializedFieldsSet :
@@ -455,7 +452,7 @@ void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
      */
     //NDC->getQualifiedNameAsString());
 #if DEBUG_PRINTS
-  os << "Ctor Name from Decl is: " << NDC->getNameAsString() << "\n";
+  llvm::errs() << "Ctor Name from Decl is: " << NSQCtorName << "\n";
 #endif
     updateSetInternal(&ctorHasNoBodyInTUSet,
 		      NDC->getNameAsString());
@@ -482,7 +479,7 @@ void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
       const NamedDecl *ND = dyn_cast<NamedDecl>(FD);
       const std::string FName = ND->getQualifiedNameAsString();
 #if DEBUG_PRINTS
-      os << "Adding field to ctor set: " << FName << "\n";
+      llvm::errs() << "Adding field to ctor set: " << FName << "\n";
 #endif
       updateSetInternal(&ctorInitializedFieldsSet, FName);
   }
@@ -535,9 +532,9 @@ void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
        * being defined in a Ctor statement means.
        */
       if(!isDef){
-	  os << "Undefined object field in ctor\n";
+	  llvm::errs() << "Undefined object field in ctor\n";
 	  BO->getRHS()->dumpPretty(Mgr.getASTContext());
-	  os << "\n";
+	  llvm::errs() << "\n";
 	  /* Refactor code for taking an expression
 	   * and adding it to set
 	   */
@@ -600,12 +597,12 @@ void Myfirstchecker::printSetInternal(InitializedFieldsSetTy *Set) const {
 
   InitializedFieldsSetTy::iterator it;
 
-  os << "Printing set of field members that are initialized "
+  llvm::errs() << "Printing set of field members that are initialized "
       << "either in ctor or in class\n";
 
   for(it = Set->begin();
       it != Set->end(); ++it)
-    os << (*it) << "\n";
+    llvm::errs() << (*it) << "\n";
 
   return;
 }
@@ -614,7 +611,7 @@ void Myfirstchecker::prettyPrintE(StringRef S, const Expr *E,
                                  ASTContext &ASTC) const {
   os << S << ": ";
   E->dumpPretty(ASTC);
-  os << "\n";
+  llvm::errs() << "\n";
   return;
 }
 
@@ -622,7 +619,7 @@ void Myfirstchecker::prettyPrintD(StringRef S,
                                   const Decl *D) const {
   os << S << ": ";
   D->dump();
-  os << "\n";
+  llvm::errs() << "\n";
   return;
 }
 
