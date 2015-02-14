@@ -56,6 +56,19 @@ class Myfirstchecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
   mutable InitializedFieldsSetTy ctorInitializedFieldsSet;
   mutable InitializedFieldsSetTy contextInitializedFieldsSet;
 
+  /* If the constructor decl being visited has no body in
+   * the translation unit, we insert the constructor decl's
+   * fully qualified name into this set
+   *
+   * Later, when visiting statements, if the base object of
+   * member expression is in this set, we return from the
+   * prestmt visitor. In fact, we can even generate a sink
+   * to stop further path exploration. Note that the type
+   * of this set is the same as the sets where defs are
+   * tracked
+   */
+  mutable InitializedFieldsSetTy ctorHasNoBodyInTUSet;
+
   /* Have aggressively registered for checkers here but
    * won't be using non AST visitors for the time being
    *
@@ -103,6 +116,8 @@ private:
                                  CheckerContext &C) const;
   bool trackMembersInAssign(const BinaryOperator *BO,
                             SetKind S, ASTContext &ASTC) const;
+  static bool isCXXThisExpr(const Expr *E);
+  bool skipExpr(const Expr *E) const;
 };
 } // end of anonymous namespace
 
@@ -113,25 +128,20 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
   if(UO->getOpcode() != UO_LNot)
     return;
 
-  /* Return if not member expression */
+  /* Ignore implicit casts */
   Expr *E = UO->getSubExpr()->IgnoreImpCasts();
-  MemberExpr *ME = dyn_cast<MemberExpr>(E);
-  if(!ME)
-    return;
 
-  /* Return if member expression has no base
-   * Wonder what this implies
+  /* Bail if possible
+   * We check if
+   * 	1. Expr is a this expr AND
+   * 	2. If (1) is true
+   * 	   a. If there is no body for ctor
+   * 	   of class to which member expr belongs
    */
-  Expr *Base = ME->getBase();
-  if(!Base)
+  if(skipExpr(E))
     return;
 
-
-  /* Return if not cxx this* expression */
-  CXXThisExpr *CTE = dyn_cast<CXXThisExpr>(Base);
-  if(!CTE)
-    return;
-
+  const MemberExpr *ME = dyn_cast<MemberExpr>(E);
   /* Get the FQ field name */
   const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
   const std::string FieldName =
@@ -155,6 +165,70 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
 
 }
 
+// This can be a private static function
+bool Myfirstchecker::isCXXThisExpr(const Expr *E) {
+  /* Expr->MemberExpr->GetBase */
+  const MemberExpr *ME = dyn_cast<MemberExpr>(E);
+  if(!ME)
+    return false;
+
+  const Expr *BaseExpr = ME->getBase();
+  if(!BaseExpr)
+    return false;
+
+  const CXXThisExpr *CTE = dyn_cast<CXXThisExpr>(BaseExpr);
+  if(!CTE)
+    return false;
+
+  return true;
+}
+
+/* This must be called post isCXXThisExpr() defined
+ * above.
+ */
+bool Myfirstchecker::skipExpr(const Expr *E) const {
+
+  /* Additional check although isCXXThisExpr() is
+   * called once before in checkPreStmt<BO>
+   * This is because either LHS or RHS may still
+   * be a non this expr in which case we can bail
+   * early
+   */
+  if(!isCXXThisExpr(E))
+    return true;
+
+  /* Check if base of Expr is in ctorHasNoBodyInTU Set
+   * bailing if true
+   */
+  const MemberExpr *ME = dyn_cast<MemberExpr>(E);
+  // Get FQN
+  const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
+  std::string FQFieldName =
+		ND->getQualifiedNameAsString();
+
+  /* string magic, shitty magic at that
+   * What we are basically doing here is:
+   * "foo::x" (FQFieldName), "x" (FieldName)
+   * BaseName is "foo::"
+   * Finally, CtorName is "foo"
+   * "foo" is what we have inserted in the AST* visitor
+   * for Ctors that don't have a body
+   */
+  std::string FieldName = ND->getNameAsString();
+  std::string BaseName = FQFieldName.substr(0,FQFieldName.find(FieldName));
+  std::string CtorName = BaseName.substr(0, BaseName.length() -2);
+  bool canSkip =
+      (ctorHasNoBodyInTUSet.find(CtorName) != ctorHasNoBodyInTUSet.end());
+
+#if DEBUG_PRINTS
+  os << "Ctor Name from Expr is: " << CtorName << "\n";
+  os << "Match "
+     << (canSkip ? "found. Skipping expression\n" : "not found. Continuing\n");
+#endif
+
+  return canSkip;
+}
+
 void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
                                   CheckerContext &C) const {
 
@@ -164,6 +238,20 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
   /* Return if binop is not eq. assignment */
   if((BO->getOpcode() != BO_Assign))
     return;
+
+  /* We can return if neither LHS nor RHS is a CXXThisExpr
+   * This is because we are only tracking usedef for
+   * this->member fields
+   * */
+   if(!isCXXThisExpr(BO->getRHS()) && !isCXXThisExpr(BO->getLHS()))
+     return;
+
+   /* We can skip BO if both LHS and RHS are member expressions
+    * of object that does not have a body in TU
+    * This is done to prune false positives
+    */
+   if(skipExpr(BO->getLHS()) && skipExpr(BO->getRHS()))
+     return;
 
   /* AnalysisDeclarationContext tells us which function
    * declaration (definition) is being visited. We maintain
@@ -352,11 +440,27 @@ void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
                                   BugReporter &BR) const {
 
   /* Do the following things:
-   * 1. Check if fdecl is a ctor of a cxx object. If yes:
-   *	 a. Check if ctor has member fields. If yes:
-   *	 	i. Update state map with initialization
-   *	 		status of member fields
+   *  1. Check if ctor has body in TU.
+   *  	a. If not, add class decl to ctorHasNoBodyInTU and return
+   *  	b. If there is a body, continue to Step (2)
+   *  2. Check if ctor has member fields. If yes:
+   *	 	a. Update ctorInitializedFieldsSet
    */
+  if(!CtorDecl->hasBody()){
+    const NamedDecl *NDC = dyn_cast<NamedDecl>(CtorDecl);
+    /* FIXME: This should be fully qualified name
+     * The reason we insert non fully qualified name of
+     * Ctor is because we don't know how to get the same
+     * string for comparison at the time of checkPreStmt.
+     */
+    //NDC->getQualifiedNameAsString());
+#if DEBUG_PRINTS
+  os << "Ctor Name from Decl is: " << NDC->getNameAsString() << "\n";
+#endif
+    updateSetInternal(&ctorHasNoBodyInTUSet,
+		      NDC->getNameAsString());
+    return;
+  }
 
   /* CtorDecl has this magical range-based iterator function */
   for(auto *I : CtorDecl->inits()){
