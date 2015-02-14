@@ -159,7 +159,7 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
                                   CheckerContext &C) const {
 
 #if DEBUG_PRINTS
-    os << "Track assignment in context\n";
+    os << "Binop Pre Statement visitor\n";
 #endif
   /* Return if binop is not eq. assignment */
   if((BO->getOpcode() != BO_Assign))
@@ -426,8 +426,28 @@ void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
       bool isDef = trackMembersInAssign(BO, Ctor,
                            Mgr.getASTContext());
 
-      if(!isDef)
+      /* We can creepily add LHS here assuming that
+       * it's us who don't understand what RHS not
+       * being defined in a Ctor statement means.
+       */
+      if(!isDef){
 	  os << "Undefined object field in ctor\n";
+	  BO->getRHS()->dumpPretty(Mgr.getASTContext());
+	  os << "\n";
+	  /* Refactor code for taking an expression
+	   * and adding it to set
+	   */
+//
+//	  // Add LHS to ctorInitializedFieldsSet
+//	  const Expr *E = BO->getLHS();
+//	  const MemberExpr *ME = dyn_cast<MemberExpr>(E);
+//	  if(!ME)
+//	    continue;
+//	  const NamedDecl *NDLHS =
+//
+//	  updateSetInternal(&ctorInitializedFieldsSet,
+//	                    FieldNameLHS);
+      }
   }
 
   return;
