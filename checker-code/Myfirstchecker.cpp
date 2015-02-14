@@ -158,6 +158,9 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
 void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
                                   CheckerContext &C) const {
 
+#if DEBUG_PRINTS
+    os << "Track assignment in context\n";
+#endif
   /* Return if binop is not eq. assignment */
   if((BO->getOpcode() != BO_Assign))
     return;
@@ -176,7 +179,6 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
   /* FIXME: Pointer to decl may not be a unique value for all
    * funtion decls in TU. IOW, using decl is flaky
    */
-
   ASTContext &ASTC = C.getASTContext();
   AnalysisDeclContext *cContext = C.getCurrentAnalysisDeclContext();
   const Decl *cDecl = cContext->getDecl();
