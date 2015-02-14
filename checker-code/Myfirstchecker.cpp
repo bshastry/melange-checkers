@@ -199,26 +199,34 @@ bool Myfirstchecker::skipExpr(const Expr *E) const {
 
   /* Check if base of Expr is in ctorHasNoBodyInTU Set
    * bailing if true
+   * Remove clang inserted implicit casts before
+   * continuing.
    */
-  const MemberExpr *ME = dyn_cast<MemberExpr>(E);
-  // Get FQN
+  const MemberExpr *ME =
+      dyn_cast<MemberExpr>(E->IgnoreImpCasts());
+
+  // Get Fully Qualified Name
   const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
-  std::string FQFieldName =
-		ND->getQualifiedNameAsString();
+  std::string FQFieldName = ND->getQualifiedNameAsString();
 
   /* string magic, shitty magic at that
    * What we are basically doing here is:
-   * "foo::x" (FQFieldName), "x" (FieldName)
-   * BaseName is "foo::"
-   * Finally, CtorName is "foo"
-   * "foo" is what we have inserted in the AST* visitor
+   * "ns::foo::field" (FQFieldName), "field" (FieldName)
+   * <------>  NSQCtorName
+   * "ns::foo" is what we have inserted in the AST* visitor
    * for Ctors that don't have a body
    */
   std::string FieldName = ND->getNameAsString();
-  std::string BaseName = FQFieldName.substr(0,FQFieldName.find(FieldName));
-  std::string CtorName = BaseName.substr(0, BaseName.length() -2);
+  /* We should be careful to filter out the field name and the
+   * two colons "::" before field name
+   */
+  std::string NSQCtorName =
+      FQFieldName.substr(0,(FQFieldName.length() - FieldName.length() - 2));
+
+//  std::string BaseName = FQFieldName.substr(0,FQFieldName.find(FieldName));
+//  std::string CtorName = BaseName.substr(0, BaseName.length() -2);
   bool canSkip =
-      (ctorHasNoBodyInTUSet.find(CtorName) != ctorHasNoBodyInTUSet.end());
+      (ctorHasNoBodyInTUSet.find(NSQCtorName) != ctorHasNoBodyInTUSet.end());
 
 #if DEBUG_PRINTS
   llvm::errs() << "Ctor Name from Expr is: " << NSQCtorName << "\n";
@@ -302,7 +310,8 @@ bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
   const Expr *lhs = BO->getLHS();
   const Expr *rhs = BO->getRHS();
 
-  const MemberExpr *MeLHS = dyn_cast<MemberExpr>(lhs);
+  const MemberExpr *MeLHS =
+      dyn_cast<MemberExpr>(lhs->IgnoreImpCasts());
   /* Magic to get to RHS member expr
    * Turns out rhs of ``equal to" is an expression
    * of an ImplicitCastExpr type because there is
@@ -450,12 +459,20 @@ void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
      * Ctor is because we don't know how to get the same
      * string for comparison at the time of checkPreStmt.
      */
-    //NDC->getQualifiedNameAsString());
+
+    /* FQName == ns::classname::classname
+     * CtorName == classname
+     * NSQCtorName == ns::classname
+     */
+    std::string FQName = NDC->getQualifiedNameAsString();
+    std::string CtorName = NDC->getNameAsString();
+    std::string NSQCtorName =
+      FQName.substr(0,(FQName.length() - CtorName.length() - 2));
 #if DEBUG_PRINTS
   llvm::errs() << "Ctor Name from Decl is: " << NSQCtorName << "\n";
 #endif
     updateSetInternal(&ctorHasNoBodyInTUSet,
-		      NDC->getNameAsString());
+                      NSQCtorName);
     return;
   }
 
