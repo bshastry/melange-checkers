@@ -108,16 +108,17 @@ private:
                         SetKind S) const;
   bool isElementUndefined(const std::string Fname) const;
 
-  void prettyPrintE(StringRef S, const Expr *E,
-		     ASTContext &ASTC) const;
-  void prettyPrintD(StringRef S, const Decl *D) const;
-
   void reportBug(StringRef Message, SourceRange SR,
                                  CheckerContext &C) const;
   bool trackMembersInAssign(const BinaryOperator *BO,
                             SetKind S, ASTContext &ASTC) const;
-  static bool isCXXThisExpr(const Expr *E);
-  bool skipExpr(const Expr *E) const;
+  bool skipExpr(const Expr *E, ASTContext &ASTC) const;
+  // Static utility functions
+  static bool isCXXThisExpr(const Expr *E, ASTContext &ASTC);
+
+  static void prettyPrintE(StringRef S, const Expr *E,
+		     ASTContext &ASTC);
+  static void prettyPrintD(StringRef S, const Decl *D);
 };
 } // end of anonymous namespace
 
@@ -127,6 +128,8 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
   /* Return if not a logical NOT operator */
   if(UO->getOpcode() != UO_LNot)
     return;
+
+  ASTContext &ASTC = C.getASTContext();
 
   /* Ignore implicit casts */
   Expr *E = UO->getSubExpr()->IgnoreImpCasts();
@@ -138,7 +141,7 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
    * 	   a. If there is no body for ctor
    * 	   of class to which member expr belongs
    */
-  if(skipExpr(E))
+  if(skipExpr(E, ASTC))
     return;
 
   const MemberExpr *ME = dyn_cast<MemberExpr>(E);
@@ -166,9 +169,27 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
 }
 
 // This can be a private static function
-bool Myfirstchecker::isCXXThisExpr(const Expr *E) {
-  /* Expr->MemberExpr->GetBase */
-  const MemberExpr *ME = dyn_cast<MemberExpr>(E);
+bool Myfirstchecker::isCXXThisExpr(const Expr *E,
+                                   ASTContext &ASTC) {
+  /* Remove clang inserted implicit casts before
+   * continuing. Otherwise, statements like this
+   *     int x = this->member
+   * bail out because casting (this->member) to
+   * MemberExpr before removing casts returns
+   * null. This shouldn't affect LHS with no
+   * implicit casts
+   */
+#if DEBUG_PRINTS_VERBOSE
+  prettyPrintE("Is this expr", E, ASTC);
+  prettyPrintE("Is this expr (ignore imp casts)",
+               E->IgnoreImpCasts(), ASTC);
+
+  llvm::errs() << "Is a member expr: " <<
+      (isa<MemberExpr>(E->IgnoreImpCasts()) ? "Yes" : "No") << "\n";
+#endif
+  const MemberExpr *ME =
+      dyn_cast<MemberExpr>(E->IgnoreImpCasts());
+
   if(!ME)
     return false;
 
@@ -186,7 +207,8 @@ bool Myfirstchecker::isCXXThisExpr(const Expr *E) {
 /* This must be called post isCXXThisExpr() defined
  * above.
  */
-bool Myfirstchecker::skipExpr(const Expr *E) const {
+bool Myfirstchecker::skipExpr(const Expr *E,
+                              ASTContext &ASTC) const {
 
   /* Additional check although isCXXThisExpr() is
    * called once before in checkPreStmt<BO>
@@ -194,7 +216,7 @@ bool Myfirstchecker::skipExpr(const Expr *E) const {
    * be a non this expr in which case we can bail
    * early
    */
-  if(!isCXXThisExpr(E))
+  if(!isCXXThisExpr(E, ASTC))
     return true;
 
   /* Check if base of Expr is in ctorHasNoBodyInTU Set
@@ -244,18 +266,21 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
   if((BO->getOpcode() != BO_Assign))
     return;
 
+  ASTContext &ASTC = C.getASTContext();
+
   /* We can return if neither LHS nor RHS is a CXXThisExpr
    * This is because we are only tracking usedef for
    * this->member fields
    * */
-   if(!isCXXThisExpr(BO->getRHS()) && !isCXXThisExpr(BO->getLHS()))
+   if(!isCXXThisExpr(BO->getRHS(), ASTC)
+       && !isCXXThisExpr(BO->getLHS(), ASTC))
      return;
 
    /* We can skip BO if both LHS and RHS are member expressions
     * of object that does not have a body in TU
     * This is done to prune false positives
     */
-   if(skipExpr(BO->getLHS()) && skipExpr(BO->getRHS()))
+   if(skipExpr(BO->getLHS(), ASTC) && skipExpr(BO->getRHS(), ASTC))
      return;
 
   /* AnalysisDeclarationContext tells us which function
@@ -272,7 +297,6 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
   /* FIXME: Pointer to decl may not be a unique value for all
    * funtion decls in TU. IOW, using decl is flaky
    */
-  ASTContext &ASTC = C.getASTContext();
   AnalysisDeclContext *cContext = C.getCurrentAnalysisDeclContext();
   const Decl *cDecl = cContext->getDecl();
 
@@ -625,16 +649,16 @@ void Myfirstchecker::printSetInternal(InitializedFieldsSetTy *Set) const {
 }
 
 void Myfirstchecker::prettyPrintE(StringRef S, const Expr *E,
-                                 ASTContext &ASTC) const {
-  os << S << ": ";
+                                 ASTContext &ASTC) {
+  llvm::errs() << S << ": ";
   E->dumpPretty(ASTC);
   llvm::errs() << "\n";
   return;
 }
 
 void Myfirstchecker::prettyPrintD(StringRef S,
-                                  const Decl *D) const {
-  os << S << ": ";
+                                  const Decl *D) {
+  llvm::errs() << S << ": ";
   D->dump();
   llvm::errs() << "\n";
   return;
