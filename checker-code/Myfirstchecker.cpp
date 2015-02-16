@@ -141,6 +141,10 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
    * 	   a. If there is no body for ctor
    * 	   of class to which member expr belongs
    */
+#if DEBUG_PRINTS_VERBOSE
+  E->dumpPretty(ASTC);
+  llvm::errs() << "\n";
+#endif
   if(skipExpr(E, ASTC))
     return;
 
@@ -155,6 +159,9 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
    * a warning only if we know for sure that ctor does not
    * have a body in this translation unit
    */
+#if DEBUG_PRINTS
+  llvm::errs() << "Element in unary lnot is: " << FieldName << "\n";
+#endif
   if(isElementUndefined(FieldName))
   {
 	// Report bug
@@ -261,6 +268,10 @@ bool Myfirstchecker::skipExpr(const Expr *E,
 
 void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
                                   CheckerContext &C) const {
+
+#if DEBUG_PRINTS_VERBOSE
+  llvm::errs() << "Visiting BinaryOp\n";
+#endif
 
   /* Return if binop is not eq. assignment */
   if((BO->getOpcode() != BO_Assign))
