@@ -113,6 +113,7 @@ private:
   bool trackMembersInAssign(const BinaryOperator *BO,
                             SetKind S, ASTContext &ASTC) const;
   bool skipExpr(const Expr *E, ASTContext &ASTC) const;
+  void clearContextIfRequired(CheckerContext &C) const;
   // Static utility functions
   static bool isCXXThisExpr(const Expr *E, ASTContext &ASTC);
 
@@ -132,6 +133,13 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
   /* Return if not a logical NOT operator */
   if(UO->getOpcode() != UO_LNot)
     return;
+
+  /* Bugfix: We should be clearing context Set if we are not in the procedure
+   * we were in the last time we visited PreStmt<BinaryOp>.
+   * Otherwise, old entries from BinaryOp visitor will
+   * persist and lead to false negatives
+   */
+  clearContextIfRequired(C);
 
   ASTContext &ASTC = C.getASTContext();
 
@@ -177,6 +185,28 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
   }
   return;
 
+}
+
+void Myfirstchecker::clearContextIfRequired(CheckerContext &C) const {
+
+  /* We obtain the declaration context. This tells us which
+   * procedure is being visited. Hopefully, getDecl() returns
+   * a unique pointer for each procedure visited in the context
+   * of a TU.
+   */
+  // FIXME: This is a flaky test. Do it properly
+  AnalysisDeclContext *cContext = C.getCurrentAnalysisDeclContext();
+  const Decl *cDecl = cContext->getDecl();
+
+  /* If the last procedure that this checker visited is not
+   * the same as the present one, clear entries in the contextSet.
+   */
+  if(pDecl != cDecl){
+    pDecl = cDecl;
+    contextInitializedFieldsSet.clear();
+  }
+
+  return;
 }
 
 // This can be a private static function
@@ -306,19 +336,10 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
    */
 
   /* Check if current analysis declaration context has changed
-   * updating pContext if necessary. Also, clear context
+   * updating pDecl if necessary. Also, clear context
    * specific set
    */
-  /* FIXME: Pointer to decl may not be a unique value for all
-   * funtion decls in TU. IOW, using decl is flaky
-   */
-  AnalysisDeclContext *cContext = C.getCurrentAnalysisDeclContext();
-  const Decl *cDecl = cContext->getDecl();
-
-  if(pDecl != cDecl){
-    pDecl = cDecl;
-    contextInitializedFieldsSet.clear();
-  }
+   clearContextIfRequired(C);
 
   /* If we are here, we are analyzing an assignment
    * statement in a function definition.
