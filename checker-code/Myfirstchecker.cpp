@@ -125,6 +125,10 @@ private:
 void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
                                   CheckerContext &C) const {
 
+#if DEBUG_PRINTS_VERBOSE
+  llvm::errs() << "Visiting UnaryOp\n";
+#endif
+
   /* Return if not a logical NOT operator */
   if(UO->getOpcode() != UO_LNot)
     return;
