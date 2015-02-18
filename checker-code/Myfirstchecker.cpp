@@ -37,9 +37,9 @@ class Myfirstchecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<BinaryOperator>,
 					check::PreStmt<UnaryOperator>>
 					{
-  typedef Decl const Decl_const_t;
+  typedef StackFrameContext const SFC_const_t;
   mutable std::unique_ptr<BugType> BT;
-  mutable Decl_const_t *pDecl = nullptr;
+  mutable SFC_const_t *pSFC = nullptr;
   enum SetKind { Ctor, Context };
 
   /* Definitions of cxx member fields of this* object are recorded
@@ -120,6 +120,7 @@ private:
   static void prettyPrintE(StringRef S, const Expr *E,
 		     ASTContext &ASTC);
   static void prettyPrintD(StringRef S, const Decl *D);
+  static const StackFrameContext* getTopStackFrame(CheckerContext &C);
 };
 } // end of anonymous namespace
 
@@ -189,24 +190,72 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
 
 void Myfirstchecker::clearContextIfRequired(CheckerContext &C) const {
 
-  /* We obtain the declaration context. This tells us which
-   * procedure is being visited. Hopefully, getDecl() returns
-   * a unique pointer for each procedure visited in the context
-   * of a TU.
+  /* We store the top most stack frame context (sfc) in the checker state.
+   * Context is equal to the sfc at the tail of the stack i.e., the outer
+   * most caller. Definitions in the context are preserved till
+   * the tail sfc changes. This prunes false positives
+   * in cases where the call leading to a member field definition
+   * preceeds use of that field.
+   *
+   * Note: This does not affect false positives arising out of
+   * path visitation logic of the PS engine in clang SA. What are
+   * pruned out are false positives that are flagged when both use
+   * and def are triggered in the same procedure but might actually happen
+   * interprocedurally. In the example below, def happens in a different
+   * procedure than where def is actually triggered. Earlier, we weren't
+   * taking care of this. Now we do.
+   * e.g.
+   *
+   * foo::def() { x = 0; }
+   * foo::use() { def(); if(!x) do_something() }
    */
-  // FIXME: This is a flaky test. Do it properly
-  AnalysisDeclContext *cContext = C.getCurrentAnalysisDeclContext();
-  const Decl *cDecl = cContext->getDecl();
 
-  /* If the last procedure that this checker visited is not
-   * the same as the present one, clear entries in the contextSet.
-   */
-  if(pDecl != cDecl){
-    pDecl = cDecl;
-    contextInitializedFieldsSet.clear();
-  }
+   const StackFrameContext *cSFC = getTopStackFrame(C);
+   if(pSFC != cSFC){
+       pSFC = cSFC;
+       contextInitializedFieldsSet.clear();
+   }
 
   return;
+}
+
+const StackFrameContext* Myfirstchecker::getTopStackFrame(CheckerContext &C) {
+
+  /* getStackFrame returns the current stack frame context i.e.,
+   * the stack frame context of the procedure we are in at this
+   * point.
+   */
+  const StackFrameContext *SFC = C.getStackFrame();
+  assert(SFC && "Checker context getStackFrame returned null!");
+
+  // If already in top frame simply return current stack frame
+  if(C.inTopFrame())
+    return SFC;
+
+  /* Nested retrieval of top most stack frame. The logic
+   * for this has been borrowed from dumpStack() impl.
+   * There is a little twist here. We assume that Stack
+   * frame contexts are always layered one on top of another.
+   * There are three kinds of contexts: (1) block (2) scope
+   * and (3) stackframe. We make an assertion if there is a
+   * non-stackframe kind Parent of a stackframe kind Child.
+   * Hope the expectation here is aligned with reality.
+   */
+  for (const LocationContext *LCtx = C.getLocationContext();
+      LCtx; LCtx = LCtx->getParent()) {
+      if(LCtx->getKind() == LocationContext::ContextKind::StackFrame)
+         SFC = cast<StackFrameContext>(LCtx);
+      /* It doesn't make sense to continue if parent is
+       * not a stack frame. I imagine stack frames stacked
+       * together and not interspersed between other frame types
+       * like Scope or Block.
+       */
+      else
+	  llvm_unreachable("This can't be! We are not in the top most"
+	      " stack frame but parent of location context is not a StackFrame kind.");
+  }
+
+  return SFC;
 }
 
 // This can be a private static function
@@ -332,12 +381,12 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
    * declaration (definition) is being visited. We maintain
    * two sets of initdata:
    * 	1. Ctor [Inter-procedural]
-   * 	2. Present decl context [Intra-procedural]
+   * 	2. Tail of present stack frame context i.e., the outermost
+   * 	caller.
    */
 
-  /* Check if current analysis declaration context has changed
-   * updating pDecl if necessary. Also, clear context
-   * specific set
+  /* Check if stack frame context has changed. If so,
+   * update pSFC and reset context.
    */
    clearContextIfRequired(C);
 
