@@ -474,6 +474,13 @@ bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
 #endif
       updateSetInternal(S ? &contextInitializedFieldsSet :
 	  &ctorInitializedFieldsSet, FieldNameLHS);
+#if DEBUG_PRINTS
+      llvm::errs() << (S ? "Printing context set: ": "Printing ctor set: ") << "\n";
+      if(S)
+	printSetInternal(&contextInitializedFieldsSet);
+      else
+	printSetInternal(&ctorInitializedFieldsSet);
+#endif
   }
   return true;
 }
@@ -673,9 +680,6 @@ void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 void Myfirstchecker::printSetInternal(InitializedFieldsSetTy *Set) const {
 
   InitializedFieldsSetTy::iterator it;
-
-  llvm::errs() << "Printing set of field members that are initialized "
-      << "either in ctor or in class\n";
 
   for(it = Set->begin();
       it != Set->end(); ++it)
