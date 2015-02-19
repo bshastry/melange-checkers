@@ -1,6 +1,6 @@
 cmake_minimum_required (VERSION 2.8)
 
-project (my-first-checker)
+project (usedef-checker)
 #set(CMAKE_BUILD_TYPE Release)
 
 # Set up relavant paths
@@ -26,7 +26,7 @@ include_directories( "${LLVM_SRC_DIR}/include"
 link_directories(${LLVM_LIBRARY_DIRS})
 
 # Make a shared library out of the checker. Can be loaded by scan-build -load-plugin
-add_library( my-first-checker SHARED Myfirstchecker.cpp )
+add_library( usedef-checker SHARED Myfirstchecker.cpp )
 
 #### Not necessary
 

@@ -31,7 +31,7 @@ cmake ..; make
 
 ```bash
 cd demo
-./demo.sh ../checker-code/build/libmy-first-checker.so alpha.security.myfirstchecker
+./demo.sh ../checker-code/build/libusedef-checker.so alpha.security.UseDefChecker
 ```
 
 FIXME: 
