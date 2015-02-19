@@ -1,13 +1,13 @@
 /*
- * Myfirstchecker.cpp
+ * UseDefChecker.cpp
  *
  *  Created on: Jan 12, 2015
- *      Author: bhargava
+ *      Author: Bhargava Shastry
  *
 //===----------------------------------------------------------------------===//
 //
-// This files defines Myfirstchecker, a custom checker that looks for
-// variable initialization patterns that tend to be buggy
+// This files defines UseDefChecker, a custom checker that looks for
+// CXX field initialization and use patterns that tend to be buggy.
 //
 //===----------------------------------------------------------------------===//
  */
@@ -33,7 +33,7 @@ using namespace ento;
 typedef std::set<std::string> InitializedFieldsSetTy;
 
 namespace {
-class Myfirstchecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
+class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<BinaryOperator>,
 					check::PreStmt<UnaryOperator>>
 					{
@@ -124,7 +124,7 @@ private:
 };
 } // end of anonymous namespace
 
-void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
+void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
                                   CheckerContext &C) const {
 
 #if DEBUG_PRINTS_VERBOSE
@@ -188,7 +188,7 @@ void Myfirstchecker::checkPreStmt(const UnaryOperator *UO,
 
 }
 
-void Myfirstchecker::clearContextIfRequired(CheckerContext &C) const {
+void UseDefChecker::clearContextIfRequired(CheckerContext &C) const {
 
   /* We store the top most stack frame context (sfc) in the checker state.
    * Context is equal to the sfc at the tail of the stack i.e., the outer
@@ -219,7 +219,7 @@ void Myfirstchecker::clearContextIfRequired(CheckerContext &C) const {
   return;
 }
 
-const StackFrameContext* Myfirstchecker::getTopStackFrame(CheckerContext &C) {
+const StackFrameContext* UseDefChecker::getTopStackFrame(CheckerContext &C) {
 
   /* getStackFrame returns the current stack frame context i.e.,
    * the stack frame context of the procedure we are in at this
@@ -259,7 +259,7 @@ const StackFrameContext* Myfirstchecker::getTopStackFrame(CheckerContext &C) {
 }
 
 // This can be a private static function
-bool Myfirstchecker::isCXXThisExpr(const Expr *E,
+bool UseDefChecker::isCXXThisExpr(const Expr *E,
                                    ASTContext &ASTC) {
   /* Remove clang inserted implicit casts before
    * continuing. Otherwise, statements like this
@@ -297,7 +297,7 @@ bool Myfirstchecker::isCXXThisExpr(const Expr *E,
 /* This must be called post isCXXThisExpr() defined
  * above.
  */
-bool Myfirstchecker::skipExpr(const Expr *E,
+bool UseDefChecker::skipExpr(const Expr *E,
                               ASTContext &ASTC) const {
 
   /* Additional check although isCXXThisExpr() is
@@ -349,7 +349,7 @@ bool Myfirstchecker::skipExpr(const Expr *E,
   return canSkip;
 }
 
-void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
+void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
                                   CheckerContext &C) const {
 
 #if DEBUG_PRINTS_VERBOSE
@@ -412,7 +412,7 @@ void Myfirstchecker::checkPreStmt(const BinaryOperator *BO,
  * Returns false if RHS is not in defs set. When this
  * happens, onus is on caller to report bug
  */
-bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
+bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
                                           SetKind S,
                                           ASTContext &ASTC) const {
   /* Check if LHS/RHS is a member expression */
@@ -534,7 +534,7 @@ bool Myfirstchecker::trackMembersInAssign(const BinaryOperator *BO,
   return true;
 }
 
-void Myfirstchecker::reportBug(StringRef Message,
+void UseDefChecker::reportBug(StringRef Message,
                                SourceRange SR,
                                CheckerContext &C) const {
   ExplodedNode *N = C.generateSink();
@@ -557,7 +557,7 @@ void Myfirstchecker::reportBug(StringRef Message,
 /* Visit AST nodes for method definitions : CXXMethodDecl is a misnomer
  * This visitor is not path sensitive
  */
-void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
+void UseDefChecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
                                   AnalysisManager &Mgr,
                                   BugReporter &BR) const {
 
@@ -688,20 +688,20 @@ void Myfirstchecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
 }
 
 /* Utility function for inserting fields into a given set */
-void Myfirstchecker::updateSetInternal(InitializedFieldsSetTy *Set,
+void UseDefChecker::updateSetInternal(InitializedFieldsSetTy *Set,
 				const std::string FName) const {
       Set->insert(FName);
 }
 
 /* Utility function for finding a field in a given set */
-bool Myfirstchecker::findElementInSet(const std::string FName,
+bool UseDefChecker::findElementInSet(const std::string FName,
                            SetKind S) const {
   InitializedFieldsSetTy Set =
       (S ? contextInitializedFieldsSet : ctorInitializedFieldsSet);
   return (Set.find(FName) != Set.end());
 }
 
-bool Myfirstchecker::isElementUndefined(const std::string FName) const {
+bool UseDefChecker::isElementUndefined(const std::string FName) const {
   /* If element is in neither Ctor not context
    * sets, it's undefined
    */
@@ -716,7 +716,7 @@ bool Myfirstchecker::isElementUndefined(const std::string FName) const {
  * Spits out the state of the internal map at the end of analysis
  */
 #if 0
-void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
+void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 				   AnalysisManager &Mgr,
 				   BugReporter &BR) const {
 #if DEBUG_PRINTS
@@ -726,7 +726,7 @@ void Myfirstchecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 }
 #endif
 
-void Myfirstchecker::printSetInternal(InitializedFieldsSetTy *Set) const {
+void UseDefChecker::printSetInternal(InitializedFieldsSetTy *Set) const {
 
   InitializedFieldsSetTy::iterator it;
 
@@ -737,7 +737,7 @@ void Myfirstchecker::printSetInternal(InitializedFieldsSetTy *Set) const {
   return;
 }
 
-void Myfirstchecker::prettyPrintE(StringRef S, const Expr *E,
+void UseDefChecker::prettyPrintE(StringRef S, const Expr *E,
                                  ASTContext &ASTC) {
   llvm::errs() << S << ": ";
   E->dumpPretty(ASTC);
@@ -745,7 +745,7 @@ void Myfirstchecker::prettyPrintE(StringRef S, const Expr *E,
   return;
 }
 
-void Myfirstchecker::prettyPrintD(StringRef S,
+void UseDefChecker::prettyPrintD(StringRef S,
                                   const Decl *D) {
   llvm::errs() << S << ": ";
   D->dump();
@@ -756,7 +756,7 @@ void Myfirstchecker::prettyPrintD(StringRef S,
 // Register plugin!
 extern "C"
 void clang_registerCheckers(CheckerRegistry &registry) {
-  registry.addChecker<Myfirstchecker>("alpha.security.myfirstchecker", "My first checker");
+  registry.addChecker<UseDefChecker>("alpha.security.UseDefChecker", "CXX UseDef Checker");
 }
 
 extern "C"

@@ -1,13 +1,11 @@
 #### Directory structure
 
 - checker-code: Source and build dirs for the checker plug-in
- - Contains source code and a `cmake` file for the checker
- - Build directory needs to be created
+ -- Contains source code and a `cmake` file for the checker
+ -- Build directory needs to be created
 
 - demo: Code and script for demo
- - demo.c is a conjured up test file for the checker
-
-- tests: tests that clang analyzer fails
+ -- demo.c is a conjured up test file for the checker
 
 #### Pre-requisites
 
@@ -33,7 +31,7 @@ cmake ..; make
 
 ```bash
 cd demo
-./demo.sh ../checker-code/build/libmy-first-checker.so alpha.security.myfirstchecker
+./demo.sh ../checker-code/build/libusedef-checker.so alpha.security.UseDefChecker
 ```
 
 FIXME: 
