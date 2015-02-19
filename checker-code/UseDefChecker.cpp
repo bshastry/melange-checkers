@@ -23,6 +23,7 @@
 
 #define DEBUG_PRINTS		0
 #define DEBUG_PRINTS_VERBOSE	0
+#define FILTER_VIRTUAL_CALLS
 
 using namespace clang;
 using namespace ento;
@@ -121,6 +122,10 @@ private:
 		     ASTContext &ASTC);
   static void prettyPrintD(StringRef S, const Decl *D);
   static const StackFrameContext* getTopStackFrame(CheckerContext &C);
+#ifdef FILTER_VIRTUAL_CALLS
+  static bool isMethodVirtual(CheckerContext &C);
+#endif
+
 };
 } // end of anonymous namespace
 
@@ -177,6 +182,10 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
 #endif
   if(isElementUndefined(FieldName))
   {
+#ifdef FILTER_VIRTUAL_CALLS
+      if(isMethodVirtual(C))
+	return;
+#endif
 	// Report bug
 #if DEBUG_PRINTS
 	llvm::errs() << "Report bug here\n";
@@ -349,6 +358,29 @@ bool UseDefChecker::skipExpr(const Expr *E,
   return canSkip;
 }
 
+#ifdef FILTER_VIRTUAL_CALLS
+bool UseDefChecker::isMethodVirtual(CheckerContext &C) {
+  const LocationContext *LC = C.getLocationContext();
+  const AnalysisDeclContext *ADC = LC->getAnalysisDeclContext();
+
+  // This gives us the function declaration being visited
+  const Decl *D = ADC->getDecl();
+
+  /* FIXME: We should generalize this to FunctionDecl
+   * as they may be declared virtual as well.
+   */
+  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(D);
+
+  if(!CMD)
+    return false;
+
+  if(!CMD->isVirtual())
+    return false;
+
+  return true;
+}
+#endif
+
 void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
                                   CheckerContext &C) const {
 
@@ -397,6 +429,10 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
 
   // Report bug
   if(!isDef){
+#ifdef FILTER_VIRTUAL_CALLS
+      if(isMethodVirtual(C))
+	return;
+#endif
       const Expr *rhs = BO->getRHS();
       const MemberExpr *MeRHS =
 	  dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
