@@ -23,7 +23,20 @@
 
 #define DEBUG_PRINTS		0
 #define DEBUG_PRINTS_VERBOSE	0
-#define FILTER_VIRTUAL_CALLS
+
+/* The heuristics we employ in pruning false positives are the following:
+ * 	a. Don't flag undefined uses in direct calls (stack depth = 1) to virtual
+ * 	functions.
+ * 		e.g. if PS engine is exploring root->VirtualFunc()
+ *
+ * 	b. Don't flag undefined uses in direct calls (stack depth = 1) to a private
+ * 	functions.
+ *	 	e.g. if PS engine is exploring root->PrivateFunc()
+ *
+ * (b) is a more precise heuristic. In fact, afaik it's a fact. Private functions
+ * may only be called within the translation unit
+ */
+#define EMPLOY_HEURISTICS
 
 using namespace clang;
 using namespace ento;
@@ -122,10 +135,12 @@ private:
 		     ASTContext &ASTC);
   static void prettyPrintD(StringRef S, const Decl *D);
   static const StackFrameContext* getTopStackFrame(CheckerContext &C);
-#ifdef FILTER_VIRTUAL_CALLS
-  static bool isMethodVirtual(CheckerContext &C);
-#endif
 
+#ifdef EMPLOY_HEURISTICS
+  static bool isMethodVirtual(CheckerContext &C);
+  static bool isASPrivate(CheckerContext &C);
+  static unsigned getDepthOfCurrentStack(CheckerContext &C);
+#endif
 };
 } // end of anonymous namespace
 
@@ -182,8 +197,10 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
 #endif
   if(isElementUndefined(FieldName))
   {
-#ifdef FILTER_VIRTUAL_CALLS
-      if(isMethodVirtual(C))
+#ifdef EMPLOY_HEURISTICS
+      unsigned StackDepth;
+      if((isMethodVirtual(C) || isASPrivate(C)) &&
+	  ((StackDepth = getDepthOfCurrentStack(C)) == 1))
 	return;
 #endif
 	// Report bug
@@ -358,16 +375,42 @@ bool UseDefChecker::skipExpr(const Expr *E,
   return canSkip;
 }
 
-#ifdef FILTER_VIRTUAL_CALLS
+#ifdef EMPLOY_HEURISTICS
+bool UseDefChecker::isASPrivate(CheckerContext &C) {
+
+  const LocationContext *LC = C.getLocationContext();
+  const AnalysisDeclContext *ADC = LC->getAnalysisDeclContext();
+
+  // This gives us the function declaration being visited
+  const Decl *D = ADC->getDecl();
+  assert(D && "getDecl in isASPrivate returned null");
+
+  /* FIXME: Is the assumption that only CXXMethodDecl
+   * can have access specifiers valid?
+   */
+  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(D);
+
+  if(!CMD)
+    return false;
+
+  // We now obtain the access specifier enum for this decl
+  clang::AccessSpecifier AS = D->getAccess();
+  if(AS != clang::AccessSpecifier::AS_private)
+    return false;
+
+  return true;
+}
+
 bool UseDefChecker::isMethodVirtual(CheckerContext &C) {
   const LocationContext *LC = C.getLocationContext();
   const AnalysisDeclContext *ADC = LC->getAnalysisDeclContext();
 
   // This gives us the function declaration being visited
   const Decl *D = ADC->getDecl();
+  assert(D && "getDecl in isMethodVirtual returned null");
 
-  /* FIXME: We should generalize this to FunctionDecl
-   * as they may be declared virtual as well.
+  /* Only CXXMethodDecls i.e., member functions (per c++ standard)
+   * can be virtual
    */
   const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(D);
 
@@ -429,8 +472,10 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
 
   // Report bug
   if(!isDef){
-#ifdef FILTER_VIRTUAL_CALLS
-      if(isMethodVirtual(C))
+#ifdef EMPLOY_HEURISTICS
+      unsigned StackDepth;
+      if((isMethodVirtual(C) || isASPrivate(C)) &&
+	  ((StackDepth = getDepthOfCurrentStack(C)) == 1))
 	return;
 #endif
       const Expr *rhs = BO->getRHS();
@@ -751,6 +796,42 @@ bool UseDefChecker::isElementUndefined(const std::string FName) const {
 
   return false;
 }
+
+#ifdef EMPLOY_HEURISTICS
+unsigned UseDefChecker::getDepthOfCurrentStack(CheckerContext &C) {
+
+  // Default StackDepth is one i.e., call being explored by PS engine
+  unsigned StackDepth = 1;
+
+  if(C.inTopFrame())
+    return StackDepth;
+
+  /* Nested retrieval of top most stack frame. The logic
+   * for this has been borrowed from dumpStack() impl.
+   * There is a little twist here. We assume that Stack
+   * frame contexts are always layered one on top of another.
+   * There are three kinds of contexts: (1) block (2) scope
+   * and (3) stackframe. We make an assertion if there is a
+   * non-stackframe kind Parent of a stackframe kind Child.
+   * Hope the expectation here is aligned with reality.
+   */
+  for (const LocationContext *LCtx = C.getLocationContext();
+      LCtx; LCtx = LCtx->getParent()) {
+      if(LCtx->getKind() == LocationContext::ContextKind::StackFrame)
+         StackDepth += 1;
+      /* It doesn't make sense to continue if parent is
+       * not a stack frame. I imagine stack frames stacked
+       * together and not interspersed between other frame types
+       * like Scope or Block.
+       */
+      else
+	  llvm_unreachable("This can't be! We are not in the top most"
+	      " stack frame but parent of location context is not a StackFrame kind.");
+  }
+
+  return StackDepth;
+}
+#endif
 
 /* Used to be EOF visitor. Can be used for debugging purposes
  * Spits out the state of the internal map at the end of analysis
