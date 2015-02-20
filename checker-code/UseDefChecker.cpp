@@ -679,12 +679,16 @@ void UseDefChecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
    * 	during PreStmt<BinaryOperator>
    */
   for(auto *it : CS->children()){
-      /* Bail if statement is not assignment */
+      /* Bail if statement is not binary op */
       const BinaryOperator *BO =
 	  dyn_cast<BinaryOperator>(it);
 
       if(!BO)
 	continue;
+
+      /* Bail if binop is not eq. assignment */
+      if((BO->getOpcode() != BO_Assign))
+        continue;
 
       /* Build up def chain
        * Note:
