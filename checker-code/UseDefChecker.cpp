@@ -35,6 +35,10 @@
  *
  * (b) is a more precise heuristic. In fact, afaik it's a fact. Private functions
  * may only be called within the translation unit
+ *
+ * Important: We terminate path exploration in cases (a) and (b) by registering for
+ * the PreCall visitor. Paths like root->VirtualFunc and root->PrivateFunc are not
+ * explored at all.
  */
 #define EMPLOY_HEURISTICS
 
@@ -47,10 +51,17 @@ using namespace ento;
 typedef std::set<std::string> InitializedFieldsSetTy;
 
 namespace {
+#ifdef EMPLOY_HEURISTICS
 class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<BinaryOperator>,
-					check::PreStmt<UnaryOperator>>
-					{
+					check::PreStmt<UnaryOperator>,
+					check::PreCall> {
+#else
+class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
+					check::PreStmt<BinaryOperator>,
+					check::PreStmt<UnaryOperator>> {
+#endif
+
   typedef StackFrameContext const SFC_const_t;
   mutable std::unique_ptr<BugType> BT;
   mutable SFC_const_t *pSFC = nullptr;
@@ -113,6 +124,9 @@ public:
                     CheckerContext &C) const;
   void checkPreStmt(const UnaryOperator *UO,
                       CheckerContext &C) const;
+#ifdef EMPLOY_HEURISTICS
+  void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
+#endif
 private:
   void printSetInternal(InitializedFieldsSetTy *Set) const;
 
@@ -143,6 +157,29 @@ private:
 #endif
 };
 } // end of anonymous namespace
+
+#ifdef EMPLOY_HEURISTICS
+void UseDefChecker::checkPreCall(const CallEvent &Call, CheckerContext &C) const {
+
+  /* Branch condition is true if PS engine is exploring root->VirtualFunc() OR
+   * root->PrivateFunc(). We terminate path exploration because of heurisitcs
+   * (a) and (b) described in the beginning of this file.
+   */
+#if DEBUG_PRINTS
+  llvm::errs() << "Terminating path exploration because PS engine"
+      " called a private/virtual function directly\n";
+#endif
+  unsigned StackDepth = getDepthOfCurrentStack(C);
+  if((StackDepth == 1) &&
+      (isMethodVirtual(C) || isASPrivate(C))){
+      ExplodedNode *N = C.generateSink();
+      if(!N)
+	llvm::errs() << "Generate sink led to an empty node\n";
+  }
+
+  return;
+}
+#endif
 
 void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
                                   CheckerContext &C) const {
@@ -197,12 +234,6 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
 #endif
   if(isElementUndefined(FieldName))
   {
-#ifdef EMPLOY_HEURISTICS
-      unsigned StackDepth;
-      if((isMethodVirtual(C) || isASPrivate(C)) &&
-	  ((StackDepth = getDepthOfCurrentStack(C)) == 1))
-	return;
-#endif
 	// Report bug
 #if DEBUG_PRINTS
 	llvm::errs() << "Report bug here\n";
@@ -472,12 +503,6 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
 
   // Report bug
   if(!isDef){
-#ifdef EMPLOY_HEURISTICS
-      unsigned StackDepth;
-      if((isMethodVirtual(C) || isASPrivate(C)) &&
-	  ((StackDepth = getDepthOfCurrentStack(C)) == 1))
-	return;
-#endif
       const Expr *rhs = BO->getRHS();
       const MemberExpr *MeRHS =
 	  dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
