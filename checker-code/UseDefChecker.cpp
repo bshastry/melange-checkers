@@ -41,6 +41,7 @@
  * explored at all.
  */
 #define EMPLOY_HEURISTICS
+#define ENCODE_BUG_INFO
 
 using namespace clang;
 using namespace ento;
@@ -94,6 +95,11 @@ class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
    */
   mutable InitializedFieldsSetTy ctorHasNoBodyInTUSet;
 
+#ifdef ENCODE_BUG_INFO
+  mutable BugReport::ExtraTextList EncodedBugInfo;
+  typedef BugReport::ExtraTextList::const_iterator EBIIteratorTy;
+#endif
+
   /* Have aggressively registered for checkers here but
    * won't be using non AST visitors for the time being
    *
@@ -116,6 +122,7 @@ class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
    * 	At the moment, we are only printing contents of the internal
    * 	map. Warnings are going to replace the debug prints eventually.
    */
+
 
 public:
   void checkASTDecl(const CXXConstructorDecl *CtorDecl,
@@ -155,6 +162,13 @@ private:
   static bool isASPrivate(CheckerContext &C);
   static unsigned getDepthOfCurrentStack(CheckerContext &C);
 #endif
+
+#ifdef ENCODE_BUG_INFO
+  // FIXME: Move dumpCallsOnStack to list of non-static functions
+  void dumpCallsOnStack(CheckerContext &C) const;
+  static std::string getADCQualifiedNameAsStringRef(const LocationContext *LC);
+#endif
+
 };
 } // end of anonymous namespace
 
@@ -237,6 +251,11 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
 	// Report bug
 #if DEBUG_PRINTS
 	llvm::errs() << "Report bug here\n";
+#endif
+
+#ifdef ENCODE_BUG_INFO
+	// This is used by reportBug to sneak in name of the undefined field
+	EncodedBugInfo.push_back(FieldName);
 #endif
 	StringRef Message = "Potentially uninitialized object field";
 	reportBug(Message, ME->getSourceRange(), C);
@@ -506,8 +525,17 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
       const Expr *rhs = BO->getRHS();
       const MemberExpr *MeRHS =
 	  dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
-      	  StringRef Message = "Potentially uninitialized object field";
-      	  reportBug(Message, MeRHS->getSourceRange(), C);
+
+#ifdef ENCODE_BUG_INFO
+      /* Get the FQ field name */
+      const NamedDecl *ND = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
+      const std::string MeRHSName = ND->getQualifiedNameAsString();
+      // This is used by reportBug to sneak in name of the undefined field
+      EncodedBugInfo.push_back(MeRHSName);
+#endif
+
+      StringRef Message = "Potentially uninitialized object field";
+      reportBug(Message, MeRHS->getSourceRange(), C);
   }
 
   return;
@@ -654,6 +682,26 @@ void UseDefChecker::reportBug(StringRef Message,
     BT.reset(new BuiltinBug(this, name, desc));
 
   BugReport *R = new BugReport(*BT, Message, N);
+
+  /* We use BugReport's addExtraText(std::string S) to
+   * pass meta data to bug report. We can possibly hijack
+   * this to encode <Undef Field, Call Stack>
+   * Note that only HTML report consumers are able to deal
+   * with this meta data. Plist probably won't do anything
+   * about it.
+   */
+#ifdef ENCODE_BUG_INFO
+  dumpCallsOnStack(C);
+
+  /* Iterate through EncodedBugInfo adding Extra text with
+   * each iteration.
+   */
+  for (EBIIteratorTy i = EncodedBugInfo.begin(),
+      e = EncodedBugInfo.end(); i != e; ++i) {
+      R->addExtraText(*i);
+   }
+#endif
+
   R->addRange(SR);
   C.emitReport(R);
 
@@ -855,6 +903,64 @@ unsigned UseDefChecker::getDepthOfCurrentStack(CheckerContext &C) {
   }
 
   return StackDepth;
+}
+#endif
+
+/* This utility function must be called from reportBug before
+ * populating the ExtraData portion of the bug report.
+ * dumpCallsOnStack pushes the call stack as a list of strings
+ * to EncodedBugInfo. EncodedBugInfo is copied on to the bug
+ * report's ExtraText field.
+ *
+ * Finally, the HTML Diagnostics client picks up ExtraText and
+ * populates the HTML report with the call stack.
+ */
+#ifdef ENCODE_BUG_INFO
+void UseDefChecker::dumpCallsOnStack(CheckerContext &C) const {
+
+  const LocationContext *LC = C.getLocationContext();
+
+  if(C.inTopFrame()){
+      EncodedBugInfo.push_back(getADCQualifiedNameAsStringRef(LC));
+      return;
+  }
+
+
+  for (const LocationContext *LCtx = C.getLocationContext();
+      LCtx; LCtx = LCtx->getParent()) {
+      if(LCtx->getKind() == LocationContext::ContextKind::StackFrame)
+	EncodedBugInfo.push_back(getADCQualifiedNameAsStringRef(LCtx));
+      /* It doesn't make sense to continue if parent is
+       * not a stack frame. I imagine stack frames stacked
+       * together and not interspersed between other frame types
+       * like Scope or Block.
+       */
+      else
+	  llvm_unreachable("dumpCallsOnStack says this is not a stack frame!");
+  }
+
+  return;
+}
+
+std::string UseDefChecker::getADCQualifiedNameAsStringRef(const LocationContext *LC) {
+
+  if(LC->getKind() != LocationContext::ContextKind::StackFrame)
+    llvm_unreachable("getADC says we are not in a stack frame!");
+
+  const AnalysisDeclContext *ADC = LC->getAnalysisDeclContext();
+  assert(ADC && "getAnalysisDecl returned null while dumping"
+         " calls on stack");
+
+  // This gives us the function declaration being visited
+  const Decl *D = ADC->getDecl();
+  assert(D && "ADC getDecl returned null while dumping"
+         " calls on stack");
+
+  const NamedDecl *ND = dyn_cast<NamedDecl>(D);
+  assert(ND && "Named declaration null while dumping"
+         " calls on stack");
+
+  return ND->getQualifiedNameAsString();
 }
 #endif
 
