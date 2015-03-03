@@ -19,7 +19,9 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/Mangle.h"
 #include "llvm/Support/raw_ostream.h"
+
 
 #define DEBUG_PRINTS		0
 #define DEBUG_PRINTS_VERBOSE	0
@@ -42,6 +44,7 @@
  */
 #define EMPLOY_HEURISTICS
 #define ENCODE_BUG_INFO
+#define MANGLE_NAMES
 
 using namespace clang;
 using namespace ento;
@@ -169,6 +172,10 @@ private:
   // FIXME: Move dumpCallsOnStack to list of non-static functions
   void dumpCallsOnStack(CheckerContext &C) const;
   static std::string getADCQualifiedNameAsStringRef(const LocationContext *LC);
+#endif
+
+#ifdef MANGLE_NAMES
+  static std::string getMangledNameAsString(const NamedDecl *ND, ASTContext &ASTC);
 #endif
 
 };
@@ -963,7 +970,34 @@ std::string UseDefChecker::getADCQualifiedNameAsStringRef(const LocationContext 
   assert(ND && "Named declaration null while dumping"
          " calls on stack");
 
+#ifdef MANGLE_NAMES
+  return getMangledNameAsString(ND, ADC->getASTContext());
+#else
   return ND->getQualifiedNameAsString();
+#endif
+}
+#endif
+
+#ifdef MANGLE_NAMES
+std::string UseDefChecker::getMangledNameAsString(const NamedDecl *ND,
+                                                  ASTContext &ASTC) {
+  // Create Mangle context
+  MangleContext *MC = ASTC.createMangleContext();
+
+  // We need raw string stream so we can return std::string
+  std::string MangledName;
+  llvm::raw_string_ostream raw_stream(MangledName);
+
+  if(!MC->shouldMangleDeclName(ND)){
+#ifdef DEBUG_PRINTS
+    llvm::errs() << "Name mangling not needed\n";
+#endif
+    return ND->getQualifiedNameAsString();
+  }
+
+  MC->mangleName(ND, raw_stream);
+
+  return raw_stream.str();
 }
 #endif
 
