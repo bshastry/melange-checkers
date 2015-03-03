@@ -149,6 +149,8 @@ private:
                             SetKind S, ASTContext &ASTC) const;
   bool skipExpr(const Expr *E, ASTContext &ASTC) const;
   void clearContextIfRequired(CheckerContext &C) const;
+  void encodeBugInfoAndReportBug(const MemberExpr *ME,
+					CheckerContext &C) const;
   // Static utility functions
   static bool isCXXThisExpr(const Expr *E, ASTContext &ASTC);
 
@@ -233,12 +235,9 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
     return;
 
   const MemberExpr *ME = dyn_cast<MemberExpr>(E);
-  /* Get the FQ field name */
   const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
-  const std::string FieldName =
-		ND->getQualifiedNameAsString();
-//  const std::string FieldName =
-//	ME->getMemberDecl()->getDeclName().getAsString();
+  const std::string FieldName = ND->getQualifiedNameAsString();
+
   /* Find Fieldname in ctor and context sets and flag
    * a warning only if we know for sure that ctor does not
    * have a body in this translation unit
@@ -247,21 +246,38 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
   llvm::errs() << "Element in unary lnot is: " << FieldName << "\n";
 #endif
   if(isElementUndefined(FieldName))
-  {
-	// Report bug
+    encodeBugInfoAndReportBug(ME, C);
+
+  return;
+}
+
+void UseDefChecker::encodeBugInfoAndReportBug(const MemberExpr *ME,
+                                              CheckerContext &C) const {
+
+  /* Get the FQ field name */
+  const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
+  const std::string FieldName = ND->getQualifiedNameAsString();
+
+  // Report bug
 #if DEBUG_PRINTS
-	llvm::errs() << "Report bug here\n";
+  llvm::errs() << "Report bug here\n";
 #endif
 
 #ifdef ENCODE_BUG_INFO
-	// This is used by reportBug to sneak in name of the undefined field
-	EncodedBugInfo.push_back(FieldName);
-#endif
-	StringRef Message = "Potentially uninitialized object field";
-	reportBug(Message, ME->getSourceRange(), C);
-  }
-  return;
+  /* This is used by reportBug to sneak in name of the undefined field
+   * Note: We don't mangle Fieldname because it's not a VarDecl and non
+   * VarDecls cannot be mangled.
+   */
+  EncodedBugInfo.push_back(FieldName);
+#endif // ENCODE_BUG_INFO
 
+  // Call stack is written to EncodedBugInfo
+  dumpCallsOnStack(C);
+
+  StringRef Message = "Potentially uninitialized object field";
+  reportBug(Message, ME->getSourceRange(), C);
+
+  return;
 }
 
 void UseDefChecker::clearContextIfRequired(CheckerContext &C) const {
@@ -523,19 +539,8 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
   // Report bug
   if(!isDef){
       const Expr *rhs = BO->getRHS();
-      const MemberExpr *MeRHS =
-	  dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
-
-#ifdef ENCODE_BUG_INFO
-      /* Get the FQ field name */
-      const NamedDecl *ND = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
-      const std::string MeRHSName = ND->getQualifiedNameAsString();
-      // This is used by reportBug to sneak in name of the undefined field
-      EncodedBugInfo.push_back(MeRHSName);
-#endif
-
-      StringRef Message = "Potentially uninitialized object field";
-      reportBug(Message, MeRHS->getSourceRange(), C);
+      const MemberExpr *MeRHS = dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
+      encodeBugInfoAndReportBug(MeRHS, C);
   }
 
   return;
@@ -691,7 +696,6 @@ void UseDefChecker::reportBug(StringRef Message,
    * about it.
    */
 #ifdef ENCODE_BUG_INFO
-  dumpCallsOnStack(C);
 
   /* Iterate through EncodedBugInfo adding Extra text with
    * each iteration.
@@ -924,7 +928,6 @@ void UseDefChecker::dumpCallsOnStack(CheckerContext &C) const {
       EncodedBugInfo.push_back(getADCQualifiedNameAsStringRef(LC));
       return;
   }
-
 
   for (const LocationContext *LCtx = C.getLocationContext();
       LCtx; LCtx = LCtx->getParent()) {
