@@ -275,11 +275,16 @@ void UseDefChecker::encodeBugInfoAndReportBug(const MemberExpr *ME,
    * Note: We don't mangle Fieldname because it's not a VarDecl and non
    * VarDecls cannot be mangled.
    */
-  EncodedBugInfo.push_back(FieldName);
-#endif // ENCODE_BUG_INFO
 
+  /* Clear DS before populating to avoid rewrites in case of multiple
+   * undefs being detected.
+   */
+  EncodedBugInfo.clear();
+
+  EncodedBugInfo.push_back(FieldName);
   // Call stack is written to EncodedBugInfo
   dumpCallsOnStack(C);
+#endif // ENCODE_BUG_INFO
 
   StringRef Message = "Potentially uninitialized object field";
   reportBug(Message, ME->getSourceRange(), C);
