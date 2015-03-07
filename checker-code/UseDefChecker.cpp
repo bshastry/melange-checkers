@@ -1000,9 +1000,13 @@ std::string UseDefChecker::getMangledNameAsString(const NamedDecl *ND,
     return ND->getQualifiedNameAsString();
   }
 
-  MC->mangleName(ND, raw_stream);
+  /* Assertion deep within mangleName */
+  if(!isa<CXXConstructorDecl>(ND) && !isa<CXXDestructorDecl>(ND)){
+    MC->mangleName(ND, raw_stream);
+    return raw_stream.str();
+  }
 
-  return raw_stream.str();
+  return ND->getQualifiedNameAsString();
 }
 #endif
 
