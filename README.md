@@ -61,7 +61,7 @@ time /home/bhargava/work/clang-analyzer/git-mirror-test/llvm/tools/clang/tools/s
 *Make*
 
 ```bash
-time /home/bhargava/work/clang-analyzer/git-mirror-test/llvm/tools/clang/tools/scan-build/scan-build -V -analyze-headers --use-analyzer /home/bhargava/workspace/llvm/bin/clang -load-plugin /home/bhargava/work/gitlab/checkers/checker-code/build/libusedef-checker.so -enable-checker alpha.security.UseDefChecker make
+time /home/bhargava/work/clang-analyzer/git-mirror-test/llvm/tools/clang/tools/scan-build/scan-build -Xanalyzer -analyzer-output=html -o checkerv2.9post-clang-diag -analyze-headers --use-analyzer /home/bhargava/workspace/llvm/bin/clang -load-plugin /home/bhargava/work/gitlab/checkers/checker-code/build/libusedef-checker.so -enable-checker alpha.security.UseDefChecker make
 ```
 
 __Chromium: Browser__
@@ -69,14 +69,19 @@ __Chromium: Browser__
 This is what worked finally. I think the problem was that scan-build was hooking gcc on to chromium build and this was a problem because the gyp files generated configure chrome for a clang build. One needs to turn clang OFF. Here's how you'd do it with GYP and scan-build
 
 ```bash
-GYP_GENERATORS=ninja GYP_DEFINES=clang=0 $HOME/work/clang-analyzer/git-mirror-test/llvm/tools/clang/tools/scan-build/scan-build --use-analyzer $HOME/workspace/llvm/bin/clang -load-plugin /home/bhargava/work/gitlab/checkers/checker-code/build/libusedef-checker.so -enable-check
-er alpha.security.UseDefChecker build/gyp_chromium -Goutput_dir=out_analyze
+GYP_GENERATORS=ninja GYP_DEFINES=clang=0 $HOME/work/clang-analyzer/git-mirror-test/llvm/tools/clang/tools/scan-build/scan-build \
+-o scan-build-out/pdfium-checkerv2.9-clang-diag -analyze-headers --use-analyzer $HOME/workspace/llvm/bin/clang -load-plugin \
+/home/bhargava/work/gitlab/checkers/checker-code/build/libusedef-checker.so -enable-checker alpha.security.UseDefChecker \
+build/gyp_chromium -Goutput_dir=out_analyze
 ```
 
 And then, you build with ninja. Note that, the command below only builds base subdir of chromium. I have copied this from google's clang SA page. I am guessing the reason they choose to do it on base is because doing a full analysis of chrome is too damn expensive.
 
 ```bash
-$HOME/work/clang-analyzer/git-mirror-test/llvm/tools/clang/tools/scan-build/scan-build --use-analyzer $HOME/workspace/llvm/bin/clang -load-plugin /home/bhargava/work/gitlab/checkers/checker-code/build/libusedef-checker.so -enable-checker alpha.security.UseDefChecker ninja -C out_analyze/Debug base
+$HOME/work/clang-analyzer/git-mirror-test/llvm/tools/clang/tools/scan-build/scan-build -o scan-build-out/skia-checkerv2.9-clang-diag \
+ -analyze-headers --use-analyzer $HOME/workspace/llvm/bin/clang -load-plugin \
+/home/bhargava/work/gitlab/checkers/checker-code/build/libusedef-checker.so -enable-checker alpha.security.UseDefChecker \
+ninja -C out_analyze/Debug skia
 ```
 
 Optionally, one could do analyze declarations in headers in addition to those in source files. This will take *much* longer.
