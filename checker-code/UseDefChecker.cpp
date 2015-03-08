@@ -22,7 +22,7 @@
 #include "clang/AST/Mangle.h"
 #include "llvm/Support/raw_ostream.h"
 
-
+// FIXME: Clean-up and refactor code.
 #define DEBUG_PRINTS		0
 #define DEBUG_PRINTS_VERBOSE	0
 
@@ -58,7 +58,8 @@ namespace {
 #ifdef EMPLOY_HEURISTICS
 class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<BinaryOperator>,
-					check::PreStmt<UnaryOperator>> {
+					check::PreStmt<UnaryOperator>,
+					check::EndFunction> {
 #else
 class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<BinaryOperator>,
@@ -138,6 +139,7 @@ public:
   void checkPreStmt(const UnaryOperator *UO,
                       CheckerContext &C) const;
 #ifdef EMPLOY_HEURISTICS
+  void checkEndFunction(CheckerContext &C) const;
   bool terminatePathIfCtorNotVisited(CheckerContext &C) const;
 #endif
 private:
@@ -187,6 +189,16 @@ private:
 } // end of anonymous namespace
 
 #ifdef EMPLOY_HEURISTICS
+/* We visit endfunction to make sure we update CtorVisited if necessary.
+ * Note that even an empty ctor body, like so:
+ * 	foo() {}
+ * is going to end up here and update CtorVisited to true.
+ */
+void UseDefChecker::checkEndFunction(CheckerContext &C) const {
+  if(isCtorOnStack(C) && !CtorVisited)
+      CtorVisited = true;
+}
+
 bool UseDefChecker::terminatePathIfCtorNotVisited(CheckerContext &C) const {
   /* If Ctor is not on the stack and we haven't visited Ctor at least
    * once, terminate path. Update CtorVisited flag if it is false and
@@ -459,8 +471,6 @@ bool UseDefChecker::skipExpr(const Expr *E,
   std::string NSQCtorName =
       FQFieldName.substr(0,(FQFieldName.length() - FieldName.length() - 2));
 
-//  std::string BaseName = FQFieldName.substr(0,FQFieldName.find(FieldName));
-//  std::string CtorName = BaseName.substr(0, BaseName.length() -2);
   bool canSkip =
       (ctorHasNoBodyInTUSet.find(NSQCtorName) != ctorHasNoBodyInTUSet.end());
 
