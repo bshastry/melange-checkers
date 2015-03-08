@@ -161,6 +161,8 @@ private:
 		     ASTContext &ASTC);
   static void prettyPrintD(StringRef S, const Decl *D);
   static const StackFrameContext* getTopStackFrame(CheckerContext &C);
+  static bool isCtorOnStack(CheckerContext &C);
+  static bool isLCCtorDecl(const LocationContext *LC);
 
 #ifdef EMPLOY_HEURISTICS
   static bool isMethodVirtual(CheckerContext &C);
@@ -545,8 +547,15 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
 
   /* If we are here, we are analyzing an assignment
    * statement in a function definition.
+   * FIXME: We shouldn't be hard-coding Context as second argument.
+   * Rather, it should be based on checking if we are (or came here)
+   * via the object's ctor.
    */
-  bool isDef = trackMembersInAssign(BO, Context, ASTC);
+  bool isDef = true;
+  if(isCtorOnStack(C))
+    isDef = trackMembersInAssign(BO, Ctor, ASTC);
+  else
+    isDef = trackMembersInAssign(BO, Context, ASTC);
 
   // Report bug
   if(!isDef){
@@ -1049,6 +1058,52 @@ void UseDefChecker::prettyPrintD(StringRef S,
   D->dump();
   llvm::errs() << "\n";
   return;
+}
+
+bool UseDefChecker::isLCCtorDecl(const LocationContext *LC) {
+
+  if(LC->getKind() != LocationContext::ContextKind::StackFrame)
+    llvm_unreachable("getADC says we are not in a stack frame!");
+
+  const AnalysisDeclContext *ADC = LC->getAnalysisDeclContext();
+  assert(ADC && "getAnalysisDecl returned null while dumping"
+         " calls on stack");
+
+  // This gives us the function declaration being visited
+  const Decl *D = ADC->getDecl();
+  assert(D && "ADC getDecl returned null while dumping"
+         " calls on stack");
+
+  const CXXConstructorDecl *CDecl = dyn_cast<CXXConstructorDecl>(D);
+  if(!CDecl)
+    return false;
+
+  return true;
+}
+
+bool UseDefChecker::isCtorOnStack(CheckerContext &C) {
+
+  const LocationContext *LC = C.getLocationContext();
+
+  if(C.inTopFrame())
+    return isLCCtorDecl(LC);
+
+  for (const LocationContext *LCtx = LC->getParent();
+      LCtx; LCtx = LCtx->getParent()) {
+      if(LCtx->getKind() == LocationContext::ContextKind::StackFrame){
+	if(isLCCtorDecl(LCtx))
+	  return true;
+      }
+      /* It doesn't make sense to continue if parent is
+       * not a stack frame. I imagine stack frames stacked
+       * together and not interspersed between other frame types
+       * like Scope or Block.
+       */
+      else
+	  llvm_unreachable("dumpCallsOnStack says this is not a stack frame!");
+  }
+
+  return false;
 }
 
 // Register plugin!
