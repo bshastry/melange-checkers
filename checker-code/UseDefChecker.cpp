@@ -58,8 +58,7 @@ namespace {
 #ifdef EMPLOY_HEURISTICS
 class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<BinaryOperator>,
-					check::PreStmt<UnaryOperator>,
-					check::PreCall> {
+					check::PreStmt<UnaryOperator>> {
 #else
 class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 					check::PreStmt<BinaryOperator>,
@@ -103,6 +102,10 @@ class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
   typedef BugReport::ExtraTextList::const_iterator EBIIteratorTy;
 #endif
 
+#ifdef EMPLOY_HEURISTICS
+  mutable bool CtorVisited = false;
+#endif
+
   /* Have aggressively registered for checkers here but
    * won't be using non AST visitors for the time being
    *
@@ -135,7 +138,7 @@ public:
   void checkPreStmt(const UnaryOperator *UO,
                       CheckerContext &C) const;
 #ifdef EMPLOY_HEURISTICS
-  void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
+  bool terminatePathIfCtorNotVisited(CheckerContext &C) const;
 #endif
 private:
   void printSetInternal(InitializedFieldsSetTy *Set) const;
@@ -184,25 +187,21 @@ private:
 } // end of anonymous namespace
 
 #ifdef EMPLOY_HEURISTICS
-void UseDefChecker::checkPreCall(const CallEvent &Call, CheckerContext &C) const {
-
-  /* Branch condition is true if PS engine is exploring root->VirtualFunc() OR
-   * root->PrivateFunc(). We terminate path exploration because of heurisitcs
-   * (a) and (b) described in the beginning of this file.
+bool UseDefChecker::terminatePathIfCtorNotVisited(CheckerContext &C) const {
+  /* If Ctor is not on the stack and we haven't visited Ctor at least
+   * once, terminate path. Update CtorVisited flag if it is false and
+   * we have Ctor on stack.
    */
-#if DEBUG_PRINTS
-  llvm::errs() << "Terminating path exploration because PS engine"
-      " called a private/virtual function directly\n";
-#endif
-  unsigned StackDepth = getDepthOfCurrentStack(C);
-  if((StackDepth == 1) &&
-      (isMethodVirtual(C) || isASPrivate(C))){
+  if(!isCtorOnStack(C) && !CtorVisited){
       ExplodedNode *N = C.generateSink();
       if(!N)
 	llvm::errs() << "Generate sink led to an empty node\n";
+      return true;
   }
+  else if(isCtorOnStack(C) && !CtorVisited)
+    CtorVisited = true;
 
-  return;
+  return false;
 }
 #endif
 
@@ -216,6 +215,25 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
   /* Return if not a logical NOT operator */
   if(UO->getOpcode() != UO_LNot)
     return;
+
+#ifdef EMPLOY_HEURISTICS
+  /* Terminate path if Ctor has not been visited. This is a conservative
+   * approach to deal with potential false positives due to Ctor call
+   * stacks not being taken into account.
+   * Consider:
+   * class foo{
+   * public:
+   *    bool m_b;
+   * 	foo() { init(); }
+   * 	void bar() { if(!m_b) print "hello"; }
+   * 	void init() { m_b = true; }
+   * If we don't terminate paths when Ctor has not been visited, our checker
+   * is going to flag if(!m_b) as a use before def warning.
+   * The downside to this is that we may miss true warnings.
+   */
+  if(terminatePathIfCtorNotVisited(C))
+    return;
+#endif
 
   /* Bugfix: We should be clearing context Set if we are not in the procedure
    * we were in the last time we visited PreStmt<BinaryOp>.
@@ -514,6 +532,25 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
   /* Return if binop is not eq. assignment */
   if((BO->getOpcode() != BO_Assign))
     return;
+
+#ifdef EMPLOY_HEURISTICS
+  /* Terminate path if Ctor has not been visited. This is a conservative
+   * approach to deal with potential false positives due to Ctor call
+   * stacks not being taken into account.
+   * Consider:
+   * class foo{
+   * public:
+   *    bool m_b;
+   * 	foo() { init(); }
+   * 	void bar() { if(!m_b) print "hello"; }
+   * 	void init() { m_b = true; }
+   * If we don't terminate paths when Ctor has not been visited, our checker
+   * is going to flag if(!m_b) as a use before def warning.
+   * The downside to this is that we may miss true warnings.
+   */
+  if(terminatePathIfCtorNotVisited(C))
+    return;
+#endif
 
   ASTContext &ASTC = C.getASTContext();
 
