@@ -26,8 +26,8 @@
 using namespace clang;
 using namespace ento;
 
-typedef llvm::DenseSet<const NamedDecl *> InitializedFieldsSetTy;
-typedef llvm::DenseSet<const Type *> CtorsVisitedTy;
+typedef llvm::DenseSet<const NamedDecl *> 	InitializedFieldsSetTy;
+typedef llvm::DenseSet<const Type *> 		CtorsVisitedTy;
 
 namespace {
 
@@ -50,11 +50,11 @@ class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
    */
   mutable InitializedFieldsSetTy ctorTaintSet;
   mutable InitializedFieldsSetTy contextTaintSet;
-  mutable CtorsVisitedTy ctorsVisited;
+  mutable CtorsVisitedTy 	 ctorsVisited;
 
   // Encode Bug info
-  mutable BugReport::ExtraTextList EncodedBugInfo;
-  typedef BugReport::ExtraTextList::const_iterator EBIIteratorTy;
+  mutable BugReport::ExtraTextList 			EncodedBugInfo;
+  typedef BugReport::ExtraTextList::const_iterator 	EBIIteratorTy;
 
 public:
   void checkASTDecl(const CXXConstructorDecl *CtorDecl,
@@ -74,7 +74,7 @@ private:
   void clearContextIfRequired(CheckerContext &C) const;
   void encodeBugInfoAndReportBug(const MemberExpr *ME, CheckerContext &C) const;
   void dumpCallsOnStack(CheckerContext &C) const;
-  bool terminatePathIfCtorNotVisited(CheckerContext &C) const;
+  bool abortEval(CheckerContext &C) const;
 
   // Static utility functions
   static bool isCXXThisExpr(const Expr *E, ASTContext &ASTC);
@@ -111,14 +111,19 @@ void UseDefChecker::checkEndFunction(CheckerContext &C) const {
 
 }
 
-bool UseDefChecker::terminatePathIfCtorNotVisited(CheckerContext &C) const {
+bool UseDefChecker::abortEval(CheckerContext &C) const {
   /* If Ctor is not on the stack and we haven't visited Ctor at least
    * once, terminate path. Update CtorVisited flag if it is false and
    * we have Ctor on stack.
    */
 
   const AnalysisDeclContext *ADC = C.getLocationContext()->getAnalysisDeclContext();
-  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(ADC->getDecl());
+  const Decl *D = ADC->getDecl();
+
+  if(isa<CXXConstructorDecl>(D))
+    return false;
+
+  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(D);
 
   /* This checker is disabled if we are in a non-instance function because
    * we don't know what the dependencies are.
@@ -134,16 +139,11 @@ bool UseDefChecker::terminatePathIfCtorNotVisited(CheckerContext &C) const {
    * Else if, we are visiting a Ctor Decl that has not been visited already,
    * add it to Visited.
    */
-  if(!isa<CXXConstructorDecl>(CMD) &&
-			  !(ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())){
+  if(!(ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())){
       ExplodedNode *N = C.generateSink();
       if(!N)
 	llvm::errs() << "Generate sink led to an empty node\n";
       return true;
-  }
-  else if(isa<CXXConstructorDecl>(CMD) &&
-			  !(ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())){
-      ctorsVisited.insert(CXXObjectTy);
   }
 
   return false;
@@ -329,7 +329,7 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
   /* This is serious: Clang SA PS path hack should force visit Ctor before
    * visiting anything else.
    */
-  if(terminatePathIfCtorNotVisited(C))
+  if(abortEval(C))
     return;
 
   clearContextIfRequired(C);
@@ -367,7 +367,7 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
   if(!isCXXThisExpr(BO->getRHS(), ASTC) && !isCXXThisExpr(BO->getLHS(), ASTC))
     return;
 
-  if(terminatePathIfCtorNotVisited(C))
+  if(abortEval(C))
     return;
 
   clearContextIfRequired(C);
