@@ -628,10 +628,9 @@ const Type *UseDefChecker::getCtorTypeOnStackOrNull(CheckerContext &C) {
   if(C.inTopFrame())
     return getCtorTypeInLCOrNull(LC);
 
-  for (const LocationContext *LCtx = C.getLocationContext();
-      LCtx; LCtx = LCtx->getParent()) {
-      if(LCtx->getKind() == LocationContext::ContextKind::StackFrame){
-	if(isLCCtorDecl(LCtx))
+  for (LC = C.getLocationContext(); LC; LC = LC->getParent()) {
+      if(LC->getKind() == LocationContext::ContextKind::StackFrame){
+	if(isLCCtorDecl(LC))
 	  return getCtorTypeInLCOrNull(LC);
       }
       /* It doesn't make sense to continue if parent is
@@ -653,10 +652,9 @@ bool UseDefChecker::isCtorOnStack(CheckerContext &C) {
   if(C.inTopFrame())
     return isLCCtorDecl(LC);
 
-  for (const LocationContext *LCtx = C.getLocationContext();
-      LCtx; LCtx = LCtx->getParent()) {
-      if(LCtx->getKind() == LocationContext::ContextKind::StackFrame){
-	if(isLCCtorDecl(LCtx))
+  for (LC = C.getLocationContext(); LC; LC = LC->getParent()) {
+      if(LC->getKind() == LocationContext::ContextKind::StackFrame){
+	if(isLCCtorDecl(LC))
 	  return true;
       }
       /* It doesn't make sense to continue if parent is
