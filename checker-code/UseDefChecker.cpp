@@ -27,6 +27,7 @@ using namespace clang;
 using namespace ento;
 
 typedef llvm::DenseSet<const NamedDecl *> InitializedFieldsSetTy;
+typedef llvm::DenseSet<const Type *> CtorsVisitedTy;
 
 namespace {
 
@@ -49,12 +50,11 @@ class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
    */
   mutable InitializedFieldsSetTy ctorTaintSet;
   mutable InitializedFieldsSetTy contextTaintSet;
+  mutable CtorsVisitedTy ctorsVisited;
 
   // Encode Bug info
   mutable BugReport::ExtraTextList EncodedBugInfo;
   typedef BugReport::ExtraTextList::const_iterator EBIIteratorTy;
-
-  mutable bool CtorVisited = false;
 
 public:
   void checkASTDecl(const CXXConstructorDecl *CtorDecl,
@@ -83,6 +83,8 @@ private:
   static bool isLCCtorDecl(const LocationContext *LC);
   static std::string getADCQualifiedNameAsStringRef(const LocationContext *LC);
   static std::string getMangledNameAsString(const NamedDecl *ND, ASTContext &ASTC);
+  static const Type *getCtorTypeInLCOrNull(const LocationContext *LC);
+  static const Type *getCtorTypeOnStackOrNull(CheckerContext &C);
 };
 } // end of anonymous namespace
 
@@ -92,8 +94,13 @@ private:
  * is going to end up here and update CtorVisited to true.
  */
 void UseDefChecker::checkEndFunction(CheckerContext &C) const {
-  if(isCtorOnStack(C) && !CtorVisited)
-      CtorVisited = true;
+
+  if(isCtorOnStack(C)){
+      const Type *CtorTy = getCtorTypeOnStackOrNull(C);
+      if(!(ctorsVisited.find(CtorTy) != ctorsVisited.end()))
+	ctorsVisited.insert(CtorTy);
+  }
+
 }
 
 bool UseDefChecker::terminatePathIfCtorNotVisited(CheckerContext &C) const {
@@ -101,14 +108,25 @@ bool UseDefChecker::terminatePathIfCtorNotVisited(CheckerContext &C) const {
    * once, terminate path. Update CtorVisited flag if it is false and
    * we have Ctor on stack.
    */
-  if(!isCtorOnStack(C) && !CtorVisited){
+
+  const AnalysisDeclContext *ADC = C.getLocationContext()->getAnalysisDeclContext();
+  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(ADC->getDecl());
+
+  // We don't terminate path exploration in case we are in a non instance function
+  if(!CMD)
+    return true;
+
+  const Type *CXXMethodTy = CMD->getThisType(ADC->getASTContext()).getTypePtrOrNull();
+  assert(CXXMethodTy && "UDC: CXXMethodTy can't be null");
+
+  if(!isCtorOnStack(C) && !(ctorsVisited.find(CXXMethodTy) != ctorsVisited.end())){
       ExplodedNode *N = C.generateSink();
       if(!N)
 	llvm::errs() << "Generate sink led to an empty node\n";
       return true;
   }
-  else if(isCtorOnStack(C) && !CtorVisited)
-    CtorVisited = true;
+  else if(isCtorOnStack(C) && !(ctorsVisited.find(CXXMethodTy) != ctorsVisited.end()))
+    ctorsVisited.insert(CXXMethodTy);
 
   return false;
 }
@@ -574,6 +592,58 @@ bool UseDefChecker::isLCCtorDecl(const LocationContext *LC) {
     return false;
 
   return true;
+}
+
+const Type *UseDefChecker::getCtorTypeInLCOrNull(const LocationContext *LC){
+
+  if(LC->getKind() != LocationContext::ContextKind::StackFrame)
+    llvm_unreachable("getADC says we are not in a stack frame!");
+
+  const AnalysisDeclContext *ADC = LC->getAnalysisDeclContext();
+  assert(ADC && "getAnalysisDecl returned null while dumping"
+         " calls on stack");
+
+  // This gives us the function declaration being visited
+  const Decl *D = ADC->getDecl();
+  assert(D && "ADC getDecl returned null while dumping"
+         " calls on stack");
+
+  const CXXConstructorDecl *CDecl = dyn_cast<CXXConstructorDecl>(D);
+  if(!CDecl)
+    return nullptr;
+
+  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(CDecl);
+  assert(CMD && "UDC: CMD of Ctor can't be null");
+
+  const Type *Ty = CMD->getThisType(ADC->getASTContext()).getTypePtrOrNull();
+  assert(Ty && "UDC: Type of Ctor can't be null");
+
+  return Ty;
+}
+
+const Type *UseDefChecker::getCtorTypeOnStackOrNull(CheckerContext &C) {
+
+  const LocationContext *LC = C.getLocationContext();
+
+  if(C.inTopFrame())
+    return getCtorTypeInLCOrNull(LC);
+
+  for (const LocationContext *LCtx = C.getLocationContext();
+      LCtx; LCtx = LCtx->getParent()) {
+      if(LCtx->getKind() == LocationContext::ContextKind::StackFrame){
+	if(isLCCtorDecl(LCtx))
+	  return getCtorTypeInLCOrNull(LC);
+      }
+      /* It doesn't make sense to continue if parent is
+       * not a stack frame. I imagine stack frames stacked
+       * together and not interspersed between other frame types
+       * like Scope or Block.
+       */
+      else
+	  llvm_unreachable("getCtorTypeOnStackOrNull says this is not a stack frame!");
+  }
+
+  return nullptr;
 }
 
 bool UseDefChecker::isCtorOnStack(CheckerContext &C) {
