@@ -1135,7 +1135,7 @@ bool UseDefChecker::isCtorOnStack(CheckerContext &C) {
   if(C.inTopFrame())
     return isLCCtorDecl(LC);
 
-  for (const LocationContext *LCtx = LC->getParent();
+  for (const LocationContext *LCtx = C.getLocationContext();
       LCtx; LCtx = LCtx->getParent()) {
       if(LCtx->getKind() == LocationContext::ContextKind::StackFrame){
 	if(isLCCtorDecl(LCtx))
