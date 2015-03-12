@@ -70,7 +70,7 @@ private:
   bool isElementUndefined(const NamedDecl *ND) const;
 
   void reportBug(StringRef Message, SourceRange SR, CheckerContext &C) const;
-  bool trackMembersInAssign(const BinaryOperator *BO, SetKind S, ASTContext &ASTC) const;
+  bool trackMembersInAssign(const BinaryOperator *BO, SetKind S, CheckerContext &C) const;
   void clearContextIfRequired(CheckerContext &C) const;
   void encodeBugInfoAndReportBug(const MemberExpr *ME, CheckerContext &C) const;
   void dumpCallsOnStack(CheckerContext &C) const;
@@ -372,13 +372,21 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
 
   clearContextIfRequired(C);
 
+  const Decl *D = C.getLocationContext()->getAnalysisDeclContext()->getDecl();
+
   bool isDef = true;
   if(isCtorOnStack(C))
-    isDef = trackMembersInAssign(BO, Ctor, ASTC);
+    isDef = trackMembersInAssign(BO, Ctor, C);
   else
-    isDef = trackMembersInAssign(BO, Context, ASTC);
+    isDef = trackMembersInAssign(BO, Context, C);
 
-  // Report bug
+  /* Report bug.
+   * The predicate !isa<CXXConstructor>(D) is meant to weed out false warnings
+   * of fields being used being undefined. I am not sure why this happens but
+   * I am pretty sure these are false alerts.
+   */
+  assert((!isDef && !isa<CXXConstructorDecl>(D))
+			     && "Undefined RHS in Ctor should not be flagged.");
   if(!isDef){
       const Expr *rhs = BO->getRHS();
       const MemberExpr *MeRHS = dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
@@ -395,7 +403,10 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
  */
 bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
                                           SetKind S,
-                                          ASTContext &ASTC) const {
+                                          CheckerContext &C) const {
+
+  const Decl *D = C.getLocationContext()->getAnalysisDeclContext()->getDecl();
+
   /* Check if LHS/RHS is a member expression */
   const Expr *lhs = BO->getLHS();
   const Expr *rhs = BO->getRHS();
@@ -435,12 +446,13 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
 
   /* Check use first because this->rhs may be uninitialized
    * and we would want to report the bug and exit before
-   * anything else
+   * anything else. Exception being this->rhs in ctor being undefined.
+   * See comment in checkPreStmt.
    */
   if(CTERHS){
       // Get FQN
       const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
-      if(isElementUndefined(NDR))
+      if(isElementUndefined(NDR) && !isa<CXXConstructorDecl>(D))
 	  return false;
   }
 
