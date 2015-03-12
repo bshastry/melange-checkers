@@ -34,7 +34,6 @@ namespace {
 class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 				      check::PreStmt<UnaryOperator>,
 				      check::PreStmt<BinaryOperator>,
-				      check::Location,
 				      check::EndFunction> {
   typedef StackFrameContext const SFC_const_t;
   mutable std::unique_ptr<BugType> BT;
@@ -59,7 +58,7 @@ class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
 public:
   void checkASTDecl(const CXXConstructorDecl *CtorDecl,
                     AnalysisManager &Mgr, BugReporter &BR) const;
-  void checkLocation(SVal Loc, bool IsLoad, const Stmt *S, CheckerContext &) const;
+//  void checkLocation(SVal Loc, bool IsLoad, const Stmt *S, CheckerContext &) const;
   void checkPreStmt(const BinaryOperator *BO, CheckerContext &C) const;
   void checkPreStmt(const UnaryOperator *UO, CheckerContext &C) const;
   void checkEndFunction(CheckerContext &C) const;
@@ -105,9 +104,8 @@ void UseDefChecker::checkEndFunction(CheckerContext &C) const {
   const Type *CXXObjectTy = CMD->getThisType(ADC->getASTContext()).getTypePtrOrNull();
   assert(CXXObjectTy && "UDC: CXXObjectTy can't be null");
 
-  if(!(ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())){
+  if(ctorsVisited.find(CXXObjectTy) == ctorsVisited.end())
       ctorsVisited.insert(CXXObjectTy);
-  }
 
 }
 
@@ -120,9 +118,6 @@ bool UseDefChecker::abortEval(CheckerContext &C) const {
   const AnalysisDeclContext *ADC = C.getLocationContext()->getAnalysisDeclContext();
   const Decl *D = ADC->getDecl();
 
-  if(isa<CXXConstructorDecl>(D))
-    return false;
-
   const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(D);
 
   /* This checker is disabled if we are in a non-instance function because
@@ -134,12 +129,18 @@ bool UseDefChecker::abortEval(CheckerContext &C) const {
   const Type *CXXObjectTy = CMD->getThisType(ADC->getASTContext()).getTypePtrOrNull();
   assert(CXXObjectTy && "UDC: CXXObjectTy can't be null");
 
+  if(isCtorOnStack(C)){
+     if(ctorsVisited.find(CXXObjectTy) == ctorsVisited.end())
+	 ctorsVisited.insert(CXXObjectTy);
+     return false;
+  }
+
   /* If we are not visiting a Ctor Decl and Ctor Decl corresponding to method
    * being explored has not been visited, terminate path exploration.
    * Else if, we are visiting a Ctor Decl that has not been visited already,
    * add it to Visited.
    */
-  if(!(ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())){
+  if(ctorsVisited.find(CXXObjectTy) == ctorsVisited.end()){
       ExplodedNode *N = C.generateSink();
       if(!N)
 	llvm::errs() << "Generate sink led to an empty node\n";
@@ -372,22 +373,19 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
 
   clearContextIfRequired(C);
 
-  const Decl *D = C.getLocationContext()->getAnalysisDeclContext()->getDecl();
-
   bool isDef = true;
   if(isCtorOnStack(C))
     isDef = trackMembersInAssign(BO, Ctor, C);
   else
     isDef = trackMembersInAssign(BO, Context, C);
 
-  /* Report bug.
-   * The predicate !isa<CXXConstructor>(D) is meant to weed out false warnings
-   * of fields being used being undefined. I am not sure why this happens but
-   * I am pretty sure these are false alerts.
-   */
-  assert((!isDef && !isa<CXXConstructorDecl>(D))
-			     && "Undefined RHS in Ctor should not be flagged.");
+  // Report bug.
   if(!isDef){
+      /* The predicate !isCtorOnStack(C) is meant to weed out false warnings
+       * of fields being used being undefined. I am not sure why this happens but
+       * I am pretty sure these are false alerts.
+       */
+      assert(!isCtorOnStack(C) && "Undefined RHS in Ctor stack should not be flagged.");
       const Expr *rhs = BO->getRHS();
       const MemberExpr *MeRHS = dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
       encodeBugInfoAndReportBug(MeRHS, C);
@@ -404,8 +402,6 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
 bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
                                           SetKind S,
                                           CheckerContext &C) const {
-
-  const Decl *D = C.getLocationContext()->getAnalysisDeclContext()->getDecl();
 
   /* Check if LHS/RHS is a member expression */
   const Expr *lhs = BO->getLHS();
@@ -452,11 +448,15 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
   if(CTERHS){
       // Get FQN
       const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
-      if(isElementUndefined(NDR) && !isa<CXXConstructorDecl>(D))
+      if(isElementUndefined(NDR) && !isCtorOnStack(C))
 	  return false;
   }
 
-  // Add lhs to set if it is a this* member
+  /* Add lhs to set if it is a this* member. We silently add LHS exprs
+   * while exploring Ctor path even if we find that RHS is undefined. The
+   * expectation is that it is abnormal to have uninitialized RHS in the
+   * process of object creation.
+   */
   if(CTELHS){
       const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
       addNDToTaintSet(S, NDL);
@@ -464,9 +464,11 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
   return true;
 }
 
+#if 0
 void UseDefChecker::checkLocation(SVal Loc, bool IsLoad, const Stmt *S, CheckerContext &C) const {
 
 }
+#endif
 
 /* Visit AST nodes for method definitions : CXXMethodDecl is a misnomer
  * This visitor is not path sensitive
@@ -617,8 +619,7 @@ bool UseDefChecker::isLCCtorDecl(const LocationContext *LC) {
   assert(D && "ADC getDecl returned null while dumping"
          " calls on stack");
 
-  const CXXConstructorDecl *CDecl = dyn_cast<CXXConstructorDecl>(D);
-  if(!CDecl)
+  if(!isa<CXXConstructorDecl>(D))
     return false;
 
   return true;
