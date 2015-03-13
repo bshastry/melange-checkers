@@ -56,9 +56,7 @@ class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
   typedef BugReport::ExtraTextList::const_iterator 	EBIIteratorTy;
 
 public:
-  void checkASTDecl(const CXXConstructorDecl *CtorDecl,
-                    AnalysisManager &Mgr, BugReporter &BR) const;
-//  void checkLocation(SVal Loc, bool IsLoad, const Stmt *S, CheckerContext &) const;
+  void checkASTDecl(const CXXConstructorDecl *CtorDecl, AnalysisManager &Mgr, BugReporter &BR) const;
   void checkPreStmt(const BinaryOperator *BO, CheckerContext &C) const;
   void checkPreStmt(const UnaryOperator *UO, CheckerContext &C) const;
   void checkEndFunction(CheckerContext &C) const;
@@ -76,7 +74,7 @@ private:
   bool abortEval(CheckerContext &C) const;
 
   // Static utility functions
-  static bool isCXXThisExpr(const Expr *E, ASTContext &ASTC);
+  static bool isCXXThisExpr(const Expr *E);
   static const StackFrameContext* getTopStackFrame(CheckerContext &C);
   static bool isCtorOnStack(CheckerContext &C);
   static bool isLCCtorDecl(const LocationContext *LC);
@@ -249,8 +247,7 @@ const StackFrameContext* UseDefChecker::getTopStackFrame(CheckerContext &C) {
 }
 
 // This can be a private static function
-bool UseDefChecker::isCXXThisExpr(const Expr *E,
-                                   ASTContext &ASTC) {
+bool UseDefChecker::isCXXThisExpr(const Expr *E) {
   /* Remove clang inserted implicit casts before
    * continuing. Otherwise, statements like this
    *     int x = this->member
@@ -259,8 +256,7 @@ bool UseDefChecker::isCXXThisExpr(const Expr *E,
    * null. This shouldn't affect LHS with no
    * implicit casts
    */
-  const MemberExpr *ME =
-      dyn_cast<MemberExpr>(E->IgnoreImpCasts());
+  const MemberExpr *ME = dyn_cast<MemberExpr>(E->IgnoreImpCasts());
 
   if(!ME)
     return false;
@@ -320,21 +316,19 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
   if(UO->getOpcode() != UO_LNot)
     return;
 
-  /* Ignore implicit casts */
-  Expr *E = UO->getSubExpr()->IgnoreImpCasts();
-  ASTContext &ASTC = C.getASTContext();
-
-  if(!isCXXThisExpr(E, ASTC))
-    return;
-
   /* This is serious: Clang SA PS path hack should force visit Ctor before
    * visiting anything else.
    */
   if(abortEval(C))
     return;
 
-  clearContextIfRequired(C);
+  /* Ignore implicit casts */
+  Expr *E = UO->getSubExpr()->IgnoreImpCasts();
 
+  if(!isCXXThisExpr(E))
+    return;
+
+  clearContextIfRequired(C);
 
   /* Bail if possible
    * We check if
@@ -359,13 +353,11 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
 void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
                                   CheckerContext &C) const {
 
-  /* Return if binop is not eq. assignment */
-  if((BO->getOpcode() != BO_Assign))
-    return;
+  const Expr *RHS = BO->getRHS()->IgnoreImpCasts();
+  const Expr *LHS = BO->getLHS()->IgnoreImpCasts();
 
-  ASTContext &ASTC = C.getASTContext();
-
-  if(!isCXXThisExpr(BO->getRHS(), ASTC) && !isCXXThisExpr(BO->getLHS(), ASTC))
+  // FIXME: Should we care about non this* objects. Use cases?
+  if(!isCXXThisExpr(RHS) && !isCXXThisExpr(LHS))
     return;
 
   if(abortEval(C))
@@ -374,21 +366,58 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
   clearContextIfRequired(C);
 
   bool isDef = true;
-  if(isCtorOnStack(C))
-    isDef = trackMembersInAssign(BO, Ctor, C);
-  else
-    isDef = trackMembersInAssign(BO, Context, C);
+  switch(BO->getOpcode()){
+    case BO_Assign:
+      if(isCtorOnStack(C))
+        isDef = trackMembersInAssign(BO, Ctor, C);
+      else
+        isDef = trackMembersInAssign(BO, Context, C);
 
-  // Report bug.
-  if(!isDef){
-      /* The predicate !isCtorOnStack(C) is meant to weed out false warnings
-       * of fields being used being undefined. I am not sure why this happens but
-       * I am pretty sure these are false alerts.
-       */
-      assert(!isCtorOnStack(C) && "Undefined RHS in Ctor stack should not be flagged.");
-      const Expr *rhs = BO->getRHS();
-      const MemberExpr *MeRHS = dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
-      encodeBugInfoAndReportBug(MeRHS, C);
+      // Report bug.
+      if(!isDef){
+          /* The predicate !isCtorOnStack(C) is meant to weed out false warnings
+           * of fields being used in Ctor being undefined. I am not sure why this happens but
+           * I am pretty sure these are false alerts.
+           */
+          assert(!isCtorOnStack(C) && "Undefined RHS in Ctor stack should not be flagged.");
+          const MemberExpr *MeRHS = dyn_cast<MemberExpr>(RHS);
+          encodeBugInfoAndReportBug(MeRHS, C);
+      }
+      break;
+    case BO_Mul:
+    case BO_Div:
+    case BO_Rem:
+    case BO_Add:
+    case BO_Sub:
+    case BO_Shl:
+    case BO_Shr:
+    case BO_LT:
+    case BO_GT:
+    case BO_LE:
+    case BO_GE:
+    case BO_EQ:
+    case BO_NE:
+    case BO_And:
+    case BO_Xor:
+    case BO_Or:
+    case BO_LAnd:
+    case BO_LOr:
+      if(isCXXThisExpr(LHS)){
+	const MemberExpr *MELHS = dyn_cast<MemberExpr>(LHS);
+	const NamedDecl *NDLHS = dyn_cast<NamedDecl>(MELHS->getMemberDecl());
+	if(isElementUndefined(NDLHS))
+	  encodeBugInfoAndReportBug(MELHS, C);
+      }
+      if(isCXXThisExpr(RHS)){
+	const MemberExpr *MERHS = dyn_cast<MemberExpr>(RHS);
+	const NamedDecl *NDRHS = dyn_cast<NamedDecl>(MERHS->getMemberDecl());
+	if(isElementUndefined(NDRHS))
+	  encodeBugInfoAndReportBug(MERHS, C);
+      }
+      break;
+
+    default:
+      break;
   }
 
   return;
@@ -404,37 +433,16 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
                                           CheckerContext &C) const {
 
   /* Check if LHS/RHS is a member expression */
-  const Expr *lhs = BO->getLHS();
-  const Expr *rhs = BO->getRHS();
+  const Expr *lhs = BO->getLHS()->IgnoreImpCasts();
+  const Expr *rhs = BO->getRHS()->IgnoreImpCasts();
 
-  const MemberExpr *MeLHS = dyn_cast<MemberExpr>(lhs->IgnoreImpCasts());
-  const MemberExpr *MeRHS = dyn_cast<MemberExpr>(rhs->IgnoreImpCasts());
+  const MemberExpr *MeLHS = dyn_cast<MemberExpr>(lhs);
+  const MemberExpr *MeRHS = dyn_cast<MemberExpr>(rhs);
 
-  /* Return if neither lhs nor rhs is a member expression */
-  if(!MeLHS && !MeRHS)
-    return true;
-
-  /* If we are here, it means that a member expression definition/use is taking place.
-   * Note: ATM, we only care about fields of this* object i.e., fields belonging to class
-   * object in whose method we are in.
+  /* Assert because wrapper takes care of ensuring we get here only if
+   * one of Binop expressions is a member expression.
    */
-  // FIXME: Should we care about non this* objects. Use cases?
-
-  CXXThisExpr *CTERHS = nullptr, *CTELHS = nullptr;
-
-  // Filter out non this* fields
-  if(MeLHS){
-      Expr *BaseLHS = MeLHS->getBase();
-      CTELHS = dyn_cast<CXXThisExpr>(BaseLHS);
-  }
-  if(MeRHS){
-      Expr *BaseRHS = MeRHS->getBase();
-      CTERHS = dyn_cast<CXXThisExpr>(BaseRHS);
-  }
-
-  // Return if neither lhs nor rhs is a this->member_expr
-  if(!CTELHS && !CTERHS)
-    return true;
+  assert((MeLHS || MeRHS) && "Neither LHS nor RHS is a member expression");
 
   /* If we are here, we can be sure that the member field
    * being defined/used belongs to this* object
@@ -445,8 +453,7 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    * anything else. Exception being this->rhs in ctor being undefined.
    * See comment in checkPreStmt.
    */
-  if(CTERHS){
-      // Get FQN
+  if(isCXXThisExpr(MeRHS)){
       const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
       if(isElementUndefined(NDR) && !isCtorOnStack(C))
 	  return false;
@@ -457,7 +464,7 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    * expectation is that it is abnormal to have uninitialized RHS in the
    * process of object creation.
    */
-  if(CTELHS){
+  if(isCXXThisExpr(MeLHS)){
       const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
       addNDToTaintSet(S, NDL);
   }
@@ -499,6 +506,14 @@ void UseDefChecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
       assert(ND && "UDC: ND can't be null here");
 
       addNDToTaintSet(Ctor, ND);
+
+      // Add init expressions to taint set if necessary
+      const Expr *E = CtorInitializer->getInit()->IgnoreImpCasts();
+      if(isCXXThisExpr(E)){
+	const MemberExpr *MEI = dyn_cast<MemberExpr>(E);
+	const NamedDecl *NDI = dyn_cast<NamedDecl>(MEI->getMemberDecl());
+	addNDToTaintSet(Ctor, NDI);
+      }
   }
 
   return;
