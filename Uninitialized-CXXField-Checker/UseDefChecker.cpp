@@ -93,7 +93,7 @@ void UseDefChecker::checkEndFunction(CheckerContext &C) const {
   const AnalysisDeclContext *ADC = C.getLocationContext()->getAnalysisDeclContext();
   const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(ADC->getDecl());
 
-  if(!CMD)
+  if(!CMD || CMD->isStatic())
     return;
 
   if(!isa<CXXConstructorDecl>(CMD))
@@ -121,7 +121,7 @@ bool UseDefChecker::abortEval(CheckerContext &C) const {
   /* This checker is disabled if we are in a non-instance function because
    * we don't know what the dependencies are.
    */
-  if(!CMD)
+  if(!CMD || CMD->isStatic())
     return true;
 
   const Type *CXXObjectTy = CMD->getThisType(ADC->getASTContext()).getTypePtrOrNull();
@@ -453,10 +453,10 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    * anything else. Exception being this->rhs in ctor being undefined.
    * See comment in checkPreStmt.
    */
-  if(isCXXThisExpr(MeRHS)){
-      const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
-      if(isElementUndefined(NDR) && !isCtorOnStack(C))
-	  return false;
+  if(MeRHS && isCXXThisExpr(rhs)){
+    const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
+    if(isElementUndefined(NDR) && !isCtorOnStack(C))
+	return false;
   }
 
   /* Add lhs to set if it is a this* member. We silently add LHS exprs
@@ -464,9 +464,9 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    * expectation is that it is abnormal to have uninitialized RHS in the
    * process of object creation.
    */
-  if(isCXXThisExpr(MeLHS)){
-      const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
-      addNDToTaintSet(S, NDL);
+  if(MeLHS && isCXXThisExpr(lhs)){
+    const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
+    addNDToTaintSet(S, NDL);
   }
   return true;
 }
