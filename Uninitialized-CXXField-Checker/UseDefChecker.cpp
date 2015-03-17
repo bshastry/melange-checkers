@@ -1,16 +1,16 @@
-/*
- * UseDefChecker.cpp
- *
- *  Created on: Jan 12, 2015
- *      Author: Bhargava Shastry
- *
+// UseDefChecker.cpp - Heuristics based checker for uses of potentially undef vals -*- C++ -*-
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
 //===----------------------------------------------------------------------===//
 //
 // This files defines UseDefChecker, a custom checker that looks for
 // CXX field initialization and use patterns that tend to be buggy.
 //
 //===----------------------------------------------------------------------===//
- */
 
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/CheckerRegistry.h"
