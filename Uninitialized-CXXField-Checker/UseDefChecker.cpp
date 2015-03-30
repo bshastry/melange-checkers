@@ -59,7 +59,7 @@ public:
                                   BugReporter &BR) const;
 
 private:
-  void addNDToTaintSet(SetKind Set, const NamedDecl *ND, CheckerContext &C) const;
+  void addNDToTaintSet(const NamedDecl *ND, CheckerContext &C) const;
   bool isTaintedInContext(const NamedDecl *ND, CheckerContext &C) const;
   void reportBug(AnalysisManager &Mgr, BugReporter &BR, const Decl *D) const;
   void reportBug(SourceRange SR, CheckerContext &C) const;
@@ -99,14 +99,14 @@ void UseDefChecker::taintCtorInits(const CXXConstructorDecl *CCD,
       const NamedDecl *ND = dyn_cast<NamedDecl>(FD);
       assert(ND && "UDC: ND can't be null here");
 
-      addNDToTaintSet(Ctor, ND, C);
+      addNDToTaintSet(ND, C);
 
       // Add init expressions to taint set if necessary
       const Expr *E = CtorInitializer->getInit()->IgnoreImpCasts();
       if(isCXXThisExpr(E)){
 	const MemberExpr *MEI = dyn_cast<MemberExpr>(E);
 	const NamedDecl *NDI = dyn_cast<NamedDecl>(MEI->getMemberDecl());
-	addNDToTaintSet(Ctor, NDI, C);
+	addNDToTaintSet(NDI, C);
       }
   }
 }
@@ -530,25 +530,27 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    */
   if(MeLHS && isCXXThisExpr(lhs)){
     const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
-    addNDToTaintSet(S, NDL, C);
+    addNDToTaintSet(NDL, C);
   }
   return true;
 }
 
 /* Utility function for inserting fields into a given set */
-void UseDefChecker::addNDToTaintSet(SetKind Set, const NamedDecl *ND,
+void UseDefChecker::addNDToTaintSet(const NamedDecl *ND,
                                     CheckerContext &C) const {
   ProgramStateRef State = C.getState();
 
-  if(Set){
+  const Decl *TLD = C.getTopLevelDecl();
+  bool Ctor = ((isa<CXXConstructorDecl>(TLD)) &&
+      (TLD == C.getLocationContext()->getAnalysisDeclContext()->getDecl()));
+
+  if(!Ctor){
     /* This taints definitions in analysis decl context */
     State = State->add<TaintDeclsInContext>(cast<const Decl>(ND));
     if(State != C.getState())
       C.addTransition(State);
   }
   else {
-    assert(isa<CXXConstructorDecl>(C.getTopLevelDecl()) &&
-	   "UDC: Attempting to taint non Ctor TLD");
     /* This taints definitions in ctor analysis decl context */
     C.addCSTaint(cast<const Decl>(ND));
   }
