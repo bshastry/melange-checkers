@@ -181,7 +181,7 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 
 	const Decl *BuggyDecl = cast<const Decl>(II->first);
 
-	/// 5. If Ctor for object to which BuggyDecl belongs has been visited
+	/// 5. If Ctor of object to which BuggyDecl belongs has been visited
 	DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(BuggyDecl);
 	const Type *Ty = std::get<1>(std::get<1>(I->second));
 
@@ -240,11 +240,19 @@ bool UseDefChecker::abortEval(CheckerContext &C) const {
 void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
                                   CheckerContext &C) const {
 
-  const CXXMethodDecl *TLD = dyn_cast<CXXMethodDecl>(C.getTopLevelDecl());
-  if(!TLD || TLD->isStatic())
+  const AnalysisDeclContext *ADC = C.getLocationContext()->getAnalysisDeclContext();
+  const Decl *D = ADC->getDecl();
+  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(D);
+
+  /* This checker is disabled if we are in a non-instance function because
+   * we don't know what the dependencies are. Symbolic execution based
+   * checkers complement our checks by taking care of what happens in non
+   * instance functions.
+   */
+  if(!CMD || CMD->isStatic())
     return;
 
-  const Type *CXXObjectTy = TLD->getThisType(C.getASTContext()).getTypePtrOrNull();
+  const Type *CXXObjectTy = CMD->getThisType(C.getASTContext()).getTypePtrOrNull();
   assert(CXXObjectTy && "UDC: CXXObjectTy can't be null");
 
   /* Get the FQ field name */
@@ -270,14 +278,16 @@ void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
    * otherwise store diagnostics for deferred checking against
    * Ctor info.
    */
-  if (!isa<CXXConstructorDecl>(C.getTopLevelDecl())){
+  const CXXMethodDecl *TLD = dyn_cast<CXXMethodDecl>(C.getTopLevelDecl());
+  if (!isa<CXXConstructorDecl>(TLD)){
     storeDiagnostics(cast<const Decl>(ND), ME->getMemberLoc(), CXXObjectTy);
     /// This taint means we found a potentially undefined class member
     C.addCSTaint(cast<const Decl>(ND));
   }
-  else
-    reportBug(ME->getSourceRange(), C);
-
+  else{
+    if (ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())
+      reportBug(ME->getSourceRange(), C);
+  }
   return;
 }
 
