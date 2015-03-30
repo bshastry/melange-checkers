@@ -31,7 +31,8 @@ typedef llvm::DenseSet<const Type *>	 				CtorsVisitedTy;
 typedef llvm::DenseSet<const Decl *>					CtorsDeclSetTy;
 typedef BugReport::ExtraTextList					ETLTy;
 typedef ETLTy::const_iterator 						EBIIteratorTy;
-typedef std::pair<ETLTy, const Type *>					DiagPairTy;
+typedef std::pair<SourceLocation, const Type *>				SLTyPairTy;
+typedef std::pair<ETLTy, SLTyPairTy>					DiagPairTy;
 typedef llvm::DenseMap<const Decl *, DiagPairTy>			DiagnosticsInfoTy;
 typedef const FunctionSummariesTy::MapTy				FSMapTy;
 typedef const FunctionSummariesTy::FunctionSummary::TLDTaintMapTy	TLDTMTy;
@@ -66,7 +67,7 @@ private:
   bool trackMembersInAssign(const BinaryOperator *BO, SetKind S, CheckerContext &C) const;
   void encodeBugInfo(const MemberExpr *ME, CheckerContext &C) const;
   void dumpCallsOnStack(CheckerContext &C) const;
-  void storeDiagnostics(const Decl *D, const Type *Ty) const;
+  void storeDiagnostics(const Decl *D, SourceLocation SL, const Type *Ty) const;
   void taintCtorInits(const CXXConstructorDecl *CCD, CheckerContext &C) const;
 
   // Static utility functions
@@ -182,7 +183,7 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 
 	/// 5. If Ctor for object to which BuggyDecl belongs has been visited
 	DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(BuggyDecl);
-	const Type *Ty = std::get<1>(I->second);
+	const Type *Ty = std::get<1>(std::get<1>(I->second));
 
 	if(ctorsVisited.find(Ty) == ctorsVisited.end())
 	  continue;
@@ -270,7 +271,7 @@ void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
    * Ctor info.
    */
   if (!isa<CXXConstructorDecl>(C.getTopLevelDecl())){
-    storeDiagnostics(cast<const Decl>(ND), CXXObjectTy);
+    storeDiagnostics(cast<const Decl>(ND), ME->getMemberLoc(), CXXObjectTy);
     /// This taint means we found a potentially undefined class member
     C.addCSTaint(cast<const Decl>(ND));
   }
@@ -308,13 +309,14 @@ void UseDefChecker::reportBug(SourceRange SR, CheckerContext &C) const {
   return;
 }
 
-void UseDefChecker::storeDiagnostics(const Decl *D, const Type *Ty) const {
+void UseDefChecker::storeDiagnostics(const Decl *D, SourceLocation SL,
+                                     const Type *Ty) const {
   DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(D);
   if (I != DiagnosticsInfo.end())
     return;
 
   typedef std::pair<const Decl *, DiagPairTy> KVPair;
-  I = DiagnosticsInfo.insert(KVPair(D, DiagPairTy(EncodedBugInfo, Ty))).first;
+  I = DiagnosticsInfo.insert(KVPair(D, DiagPairTy(EncodedBugInfo, SLTyPairTy(SL, Ty)))).first;
   assert(I != DiagnosticsInfo.end());
   return;
 }
@@ -356,8 +358,9 @@ void UseDefChecker::reportBug(AnalysisManager &Mgr, BugReporter &BR,
   DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(D);
 
   ETLTy EBI = std::get<0>(I->second);
+  SourceLocation SL = std::get<0>(std::get<1>(I->second));
 
-  PathDiagnosticLocation l(D, Mgr.getSourceManager());
+  PathDiagnosticLocation l(SL, Mgr.getSourceManager());
 
   if (!BT)
     BT.reset(new BuiltinBug(this, name, desc));
