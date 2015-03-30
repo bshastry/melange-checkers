@@ -160,7 +160,7 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
     for(TLDTMTy::const_iterator II = CtorTaintMap.begin(), EE = CtorTaintMap.end();
 	II != EE; ++II)
 	TaintedClassMembers.insert(II->first);
-  }
+  } // end of ctor taint for loop
 
   /// 1. Iterate through FS Map
   for(FSMapTy::const_iterator I = Map.begin(), E = Map.end(); I != E ; ++I){
@@ -197,8 +197,8 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 
 	/// Report bug!
 	reportBug(Mgr, BR, BuggyDecl);
-    }
-  }
+    } // end of taint map for loop
+  } // end of function summary for loop
 }
 
 #if 0
@@ -286,6 +286,9 @@ void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
    * Ctor info.
    */
   const CXXMethodDecl *TLD = dyn_cast<CXXMethodDecl>(C.getTopLevelDecl());
+  if(!TLD)
+    return;
+
   if (!isa<CXXConstructorDecl>(TLD)){
     storeDiagnostics(cast<const Decl>(ND), ME->getMemberLoc(), CXXObjectTy);
     /// This taint means we found a potentially undefined class member
@@ -551,10 +554,10 @@ void UseDefChecker::addNDToTaintSet(const NamedDecl *ND,
   ProgramStateRef State = C.getState();
 
   const Decl *TLD = C.getTopLevelDecl();
-  bool Ctor = ((isa<CXXConstructorDecl>(TLD)) &&
-      (TLD == C.getLocationContext()->getAnalysisDeclContext()->getDecl()));
+//  bool Ctor = ((isa<CXXConstructorDecl>(TLD)) &&
+//      (TLD == C.getLocationContext()->getAnalysisDeclContext()->getDecl()));
 
-  if (Ctor) {
+  if (isa<CXXConstructorDecl>(TLD)) {
     /* This taints definitions in top level ctor function summary */
     C.addCSTaint(cast<const Decl>(ND));
   }
