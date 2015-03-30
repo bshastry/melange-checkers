@@ -188,6 +188,13 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 	if(ctorsVisited.find(Ty) == ctorsVisited.end())
 	  continue;
 
+	SourceLocation SL = std::get<0>(std::get<1>(I->second));
+	SourceManager &SM = Mgr.getSourceManager();
+
+	/// Warnings in header files are potential false positives
+	if(!SM.isWrittenInMainFile(SL))
+	  continue;
+
 	/// Report bug!
 	reportBug(Mgr, BR, BuggyDecl);
     }
