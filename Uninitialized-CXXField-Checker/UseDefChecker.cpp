@@ -281,7 +281,10 @@ void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
 }
 
 void UseDefChecker::reportBug(SourceRange SR, CheckerContext &C) const {
-  ExplodedNode *N = C.generateSink();
+  /* Don't terminate path since path termination can mean that Ctor is
+   * not fully visited e.g., checkEndFunction() on Ctor is not triggered.
+   */
+  ExplodedNode *N = C.addTransition(C.getState());
   if (!N)
     return;
 
