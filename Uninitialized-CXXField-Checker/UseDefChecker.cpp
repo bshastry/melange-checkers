@@ -64,7 +64,7 @@ private:
   bool isTaintedInContext(const NamedDecl *ND, CheckerContext &C) const;
   void reportBug(AnalysisManager &Mgr, BugReporter &BR, const Decl *D) const;
   void reportBug(SourceRange SR, CheckerContext &C) const;
-  bool trackMembersInAssign(const BinaryOperator *BO, SetKind S, CheckerContext &C) const;
+  bool trackMembersInAssign(const BinaryOperator *BO, CheckerContext &C) const;
   void encodeBugInfo(const MemberExpr *ME, CheckerContext &C) const;
   void dumpCallsOnStack(CheckerContext &C) const;
   void storeDiagnostics(const Decl *D, SourceLocation SL, const Type *Ty) const;
@@ -426,19 +426,10 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
   if(!isCXXThisExpr(RHS) && !isCXXThisExpr(LHS))
     return;
 
-//  if(abortEval(C))
-//    return;
-
-//  clearContextIfRequired(C);
-
   bool isDef = true;
   switch(BO->getOpcode()){
     case BO_Assign:
-      if(isa<CXXConstructorDecl>(C.getTopLevelDecl()))
-        isDef = trackMembersInAssign(BO, Ctor, C);
-      else
-        isDef = trackMembersInAssign(BO, Context, C);
-
+      isDef = trackMembersInAssign(BO, C);
       // Report bug.
       if(!isDef){
           /* The predicate C.getTopLevelDecl() is meant to weed out false warnings
@@ -496,7 +487,6 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
  * happens, onus is on caller to report bug
  */
 bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
-                                          SetKind S,
                                           CheckerContext &C) const {
 
   /* Check if LHS/RHS is a member expression */
@@ -547,16 +537,15 @@ void UseDefChecker::addNDToTaintSet(const NamedDecl *ND,
   bool Ctor = ((isa<CXXConstructorDecl>(TLD)) &&
       (TLD == C.getLocationContext()->getAnalysisDeclContext()->getDecl()));
 
-  if(!Ctor){
-    /* This taints definitions in analysis decl context */
-    State = State->add<TaintDeclsInContext>(cast<const Decl>(ND));
-    if(State != C.getState())
-      C.addTransition(State);
-  }
-  else {
-    /* This taints definitions in ctor analysis decl context */
+  if (Ctor) {
+    /* This taints definitions in top level ctor function summary */
     C.addCSTaint(cast<const Decl>(ND));
   }
+
+  /* This taints definitions in analysis decl context */
+  State = State->add<TaintDeclsInContext>(cast<const Decl>(ND));
+  if(State != C.getState())
+    C.addTransition(State);
 }
 
 bool UseDefChecker::isTaintedInContext(const NamedDecl *ND,
