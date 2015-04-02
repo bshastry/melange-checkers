@@ -63,7 +63,7 @@ private:
   void addNDToTaintSet(const NamedDecl *ND, CheckerContext &C) const;
   bool isTaintedInContext(const NamedDecl *ND, CheckerContext &C) const;
   void reportBug(AnalysisManager &Mgr, BugReporter &BR, const Decl *D) const;
-  void reportBug(SourceRange SR, CheckerContext &C) const;
+//  void reportBug(SourceRange SR, CheckerContext &C) const;
   bool trackMembersInAssign(const BinaryOperator *BO, CheckerContext &C) const;
   void encodeBugInfo(const MemberExpr *ME, CheckerContext &C) const;
   void dumpCallsOnStack(CheckerContext &C) const;
@@ -294,13 +294,14 @@ void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
     /// This taint means we found a potentially undefined class member
     C.addCSTaint(cast<const Decl>(ND));
   }
-  else{
-    if (ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())
-      reportBug(ME->getSourceRange(), C);
-  }
+//  else{
+//    if (ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())
+//      reportBug(ME->getSourceRange(), C);
+//  }
   return;
 }
 
+#if 0
 void UseDefChecker::reportBug(SourceRange SR, CheckerContext &C) const {
   /* Don't terminate path since path termination can mean that Ctor is
    * not fully visited e.g., checkEndFunction() on Ctor is not triggered.
@@ -328,6 +329,7 @@ void UseDefChecker::reportBug(SourceRange SR, CheckerContext &C) const {
 
   return;
 }
+#endif
 
 void UseDefChecker::storeDiagnostics(const Decl *D, SourceLocation SL,
                                      const Type *Ty) const {
@@ -341,16 +343,7 @@ void UseDefChecker::storeDiagnostics(const Decl *D, SourceLocation SL,
   return;
 }
 
-// This can be a private static function
 bool UseDefChecker::isCXXThisExpr(const Expr *E) {
-  /* Remove clang inserted implicit casts before
-   * continuing. Otherwise, statements like this
-   *     int x = this->member
-   * bail out because casting (this->member) to
-   * MemberExpr before removing casts returns
-   * null. This shouldn't affect LHS with no
-   * implicit casts
-   */
   const MemberExpr *ME = dyn_cast<MemberExpr>(E->IgnoreImpCasts());
 
   if(!ME)
@@ -399,30 +392,17 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
                                   CheckerContext &C) const {
 
   /* Return if not a logical NOT operator */
-  if(UO->getOpcode() != UO_LNot)
+  if (UO->getOpcode() != UO_LNot)
     return;
 
-  /* This is serious: Clang SA PS path hack should force visit Ctor before
-   * visiting anything else.
-   */
-//  if(abortEval(C))
-//    return;
+  if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
+    return;
 
   /* Ignore implicit casts */
   Expr *E = UO->getSubExpr()->IgnoreImpCasts();
 
-  if(!isCXXThisExpr(E))
+  if (!isCXXThisExpr(E))
     return;
-
-//  clearContextIfRequired(C);
-
-  /* Bail if possible
-   * We check if
-   * 	1. Expr is a this expr AND
-   * 	2. If (1) is true
-   * 	   a. If there is no body for ctor
-   * 	   of class to which member expr belongs
-   */
 
   const MemberExpr *ME = dyn_cast<MemberExpr>(E);
   assert(ME && "UDC: ME can't be null here");
@@ -430,7 +410,7 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
   const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
   assert(ND && "UDC: ND can't be null here");
 
-  if(!isTaintedInContext(ND, C))
+  if (!isTaintedInContext(ND, C))
     encodeBugInfo(ME, C);
 
   return;
@@ -480,6 +460,19 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
     case BO_Or:
     case BO_LAnd:
     case BO_LOr:
+      /* In taintclient-checkerv1.7, we permitted warnings in the Ctor
+       * analysis context with the added logic that we only flag
+       * undefined use if we know for sure that all initializations
+       * in Ctor context have been tainted.
+       * It turns out this decision is prone to Toctou flaw. Suppose that
+       * at the time of check, Ctor is not visited but it gets visited
+       * during the course of emitting bug report.
+       * To counter this, we disable checking for undefined use
+       * in Ctor analysis decl contexts altogether.
+       */
+      if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
+	return;
+
       if(isCXXThisExpr(LHS)){
 	const MemberExpr *MELHS = dyn_cast<MemberExpr>(LHS);
 	const NamedDecl *NDLHS = dyn_cast<NamedDecl>(MELHS->getMemberDecl());
