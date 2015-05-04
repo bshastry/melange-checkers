@@ -15,10 +15,11 @@
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/CheckerRegistry.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/FunctionSummary.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/ExprCXX.h"
 #include "clang/AST/Mangle.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/DenseSet.h"
@@ -26,62 +27,90 @@
 using namespace clang;
 using namespace ento;
 
-typedef llvm::DenseSet<const NamedDecl *> 	InitializedFieldsSetTy;
-typedef llvm::DenseSet<const Type *> 		CtorsVisitedTy;
+typedef llvm::DenseSet<const Type *>	 				CtorsVisitedTy;
+typedef llvm::DenseSet<const Decl *>					CtorsDeclSetTy;
+typedef BugReport::ExtraTextList					ETLTy;
+typedef ETLTy::const_iterator 						EBIIteratorTy;
+typedef std::pair<SourceLocation, const Type *>				SLTyPairTy;
+typedef std::pair<ETLTy, SLTyPairTy>					DiagPairTy;
+typedef llvm::DenseMap<const Decl *, DiagPairTy>			DiagnosticsInfoTy;
+typedef const FunctionSummariesTy::MapTy				FSMapTy;
+typedef const FunctionSummariesTy::FunctionSummary::TLDTaintMapTy	TLDTMTy;
+typedef const FunctionSummariesTy::FunctionSummary::DTPair	 	DTPairTy;
+
 
 namespace {
 
-class UseDefChecker : public Checker< check::ASTDecl<CXXConstructorDecl>,
-				      check::PreStmt<UnaryOperator>,
+class UseDefChecker : public Checker< check::PreStmt<UnaryOperator>,
 				      check::PreStmt<BinaryOperator>,
-				      check::EndFunction> {
-  typedef StackFrameContext const SFC_const_t;
+				      check::EndFunction,
+				      check::EndOfTranslationUnit> {
   mutable std::unique_ptr<BugType> BT;
-  mutable SFC_const_t *pSFC = nullptr;
   enum SetKind { Ctor, Context };
 
-  /* Definitions of cxx member fields of this* object are recorded
-   * in two sets
-   * 	1. ctorInitializedFieldsSet: Fields initialized in ctor
-   * 		initializer list or in-class
-   * 	2. contextInitializedFieldsSet: Fields initialized in
-   * 		this->method() body
-   */
-  mutable InitializedFieldsSetTy ctorTaintSet;
-  mutable InitializedFieldsSetTy contextTaintSet;
-  mutable CtorsVisitedTy 	 ctorsVisited;
-
-  // Encode Bug info
-  mutable BugReport::ExtraTextList 			EncodedBugInfo;
-  typedef BugReport::ExtraTextList::const_iterator 	EBIIteratorTy;
+  mutable CtorsVisitedTy 	 	ctorsVisited;
+  mutable ETLTy 			EncodedBugInfo;
+  mutable DiagnosticsInfoTy		DiagnosticsInfo;
 
 public:
-  void checkASTDecl(const CXXConstructorDecl *CtorDecl, AnalysisManager &Mgr, BugReporter &BR) const;
   void checkPreStmt(const BinaryOperator *BO, CheckerContext &C) const;
   void checkPreStmt(const UnaryOperator *UO, CheckerContext &C) const;
   void checkEndFunction(CheckerContext &C) const;
+  void checkEndOfTranslationUnit(const TranslationUnitDecl *TU, AnalysisManager &Mgr,
+                                  BugReporter &BR) const;
 
 private:
-  void addNDToTaintSet(SetKind Set, const NamedDecl *ND) const;
-  bool findElementInSet(const NamedDecl *ND, SetKind S) const;
-  bool isElementUndefined(const NamedDecl *ND) const;
-
-  void reportBug(StringRef Message, SourceRange SR, CheckerContext &C) const;
-  bool trackMembersInAssign(const BinaryOperator *BO, SetKind S, CheckerContext &C) const;
-  void clearContextIfRequired(CheckerContext &C) const;
-  void encodeBugInfoAndReportBug(const MemberExpr *ME, CheckerContext &C) const;
+  void addNDToTaintSet(const NamedDecl *ND, CheckerContext &C) const;
+  bool isTaintedInContext(const NamedDecl *ND, CheckerContext &C) const;
+  void reportBug(AnalysisManager &Mgr, BugReporter &BR, const Decl *D) const;
+//  void reportBug(SourceRange SR, CheckerContext &C) const;
+  bool trackMembersInAssign(const BinaryOperator *BO, CheckerContext &C) const;
+  void encodeBugInfo(const MemberExpr *ME, CheckerContext &C) const;
   void dumpCallsOnStack(CheckerContext &C) const;
-  bool abortEval(CheckerContext &C) const;
+  void storeDiagnostics(const Decl *D, SourceLocation SL, const Type *Ty) const;
+  void taintCtorInits(const CXXConstructorDecl *CCD, CheckerContext &C) const;
 
   // Static utility functions
   static bool isCXXThisExpr(const Expr *E);
-  static const StackFrameContext* getTopStackFrame(CheckerContext &C);
-  static bool isCtorOnStack(CheckerContext &C);
-  static bool isLCCtorDecl(const LocationContext *LC);
   static std::string getADCQualifiedNameAsStringRef(const LocationContext *LC);
   static std::string getMangledNameAsString(const NamedDecl *ND, ASTContext &ASTC);
 };
 } // end of anonymous namespace
+
+REGISTER_SET_WITH_PROGRAMSTATE(TaintDeclsInContext, const Decl*)
+
+void UseDefChecker::taintCtorInits(const CXXConstructorDecl *CCD,
+                                   CheckerContext &C) const {
+
+  for(auto *I : CCD->inits()){
+      CXXCtorInitializer *CtorInitializer = I;
+      /* FIXME: Choose the right variant(s) of
+       * is*MemberInitializer call
+       */
+      if(!CtorInitializer->isMemberInitializer())
+	continue;
+
+      /* Turns out isMemberInitializer() also returns
+       * member fields initialized in class decl
+       */
+
+      // Update state map
+      const FieldDecl *FD = CtorInitializer->getMember();
+
+      const NamedDecl *ND = dyn_cast<NamedDecl>(FD);
+      assert(ND && "UDC: ND can't be null here");
+
+      addNDToTaintSet(ND, C);
+
+      // Add init expressions to taint set if necessary
+      const Expr *E = CtorInitializer->getInit()->IgnoreImpCasts();
+      if(isCXXThisExpr(E)){
+	const MemberExpr *MEI = dyn_cast<MemberExpr>(E);
+	const NamedDecl *NDI = dyn_cast<NamedDecl>(MEI->getMemberDecl());
+	addNDToTaintSet(NDI, C);
+      }
+  }
+}
 
 /* We visit endfunction to make sure we update CtorVisited if necessary.
  * Note that even an empty ctor body, like so:
@@ -99,6 +128,14 @@ void UseDefChecker::checkEndFunction(CheckerContext &C) const {
   if(!isa<CXXConstructorDecl>(CMD))
     return;
 
+  /* Absent AST visitor, we postpone tainting of Ctor inits
+   * to the fag end of Ctor analysis. This will increase
+   * false negatives in theory but not likely in practice because
+   * use of uninitialized class members during object creation is
+   * rare and pretty fucked up to be honest.
+   */
+  taintCtorInits(dyn_cast<CXXConstructorDecl>(CMD), C);
+
   const Type *CXXObjectTy = CMD->getThisType(ADC->getASTContext()).getTypePtrOrNull();
   assert(CXXObjectTy && "UDC: CXXObjectTy can't be null");
 
@@ -107,6 +144,64 @@ void UseDefChecker::checkEndFunction(CheckerContext &C) const {
 
 }
 
+void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
+                                              AnalysisManager &Mgr,
+                                              BugReporter &BR) const {
+
+  const FunctionSummariesTy::MapTy &Map = Mgr.FunctionSummary->getMap();
+  CtorsDeclSetTy TaintedClassMembers;
+
+  /// 0. Find Ctor taints
+  for(FSMapTy::const_iterator I = Map.begin(), E = Map.end(); I != E; ++I){
+    if(!isa<CXXConstructorDecl>(I->first))
+      continue;
+
+    const TLDTMTy &CtorTaintMap = I->second.getTaintMap();
+    for(TLDTMTy::const_iterator II = CtorTaintMap.begin(), EE = CtorTaintMap.end();
+	II != EE; ++II)
+	TaintedClassMembers.insert(II->first);
+  } // end of ctor taint for loop
+
+  /// 1. Iterate through FS Map
+  for(FSMapTy::const_iterator I = Map.begin(), E = Map.end(); I != E ; ++I){
+
+    if(isa<CXXConstructorDecl>(I->first))
+      continue;
+
+    /// 2. Get taint map of FS
+    const TLDTMTy &TaintMap = I->second.getTaintMap();
+
+    /// 3. Iterate through Taint map
+    for(TLDTMTy::const_iterator II = TaintMap.begin(), EE = TaintMap.end();
+	II != EE; ++II) {
+
+	/// 4. For each tainted decl, check if it is tainted in Ctor
+	if(TaintedClassMembers.find(II->first) != TaintedClassMembers.end())
+	  continue;
+
+	const Decl *BuggyDecl = cast<const Decl>(II->first);
+
+	/// 5. If Ctor of object to which BuggyDecl belongs has been visited
+	DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(BuggyDecl);
+	const Type *Ty = std::get<1>(std::get<1>(I->second));
+
+	if(ctorsVisited.find(Ty) == ctorsVisited.end())
+	  continue;
+
+	SourceLocation SL = std::get<0>(std::get<1>(I->second));
+	SourceManager &SM = Mgr.getSourceManager();
+
+	/// Warnings in header files are potential false positives
+	if(!SM.isWrittenInMainFile(SL))
+	  continue;
+
+	/// Report bug!
+	reportBug(Mgr, BR, BuggyDecl);
+    } // end of taint map for loop
+  } // end of function summary for loop
+}
+
+#if 0
 bool UseDefChecker::abortEval(CheckerContext &C) const {
   /* If Ctor is not on the stack and we haven't visited Ctor at least
    * once, terminate path. Update CtorVisited flag if it is false and
@@ -147,15 +242,30 @@ bool UseDefChecker::abortEval(CheckerContext &C) const {
 
   return false;
 }
+#endif
 
-void UseDefChecker::encodeBugInfoAndReportBug(const MemberExpr *ME,
-                                              CheckerContext &C) const {
+void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
+                                  CheckerContext &C) const {
+
+  const AnalysisDeclContext *ADC = C.getLocationContext()->getAnalysisDeclContext();
+  const Decl *D = ADC->getDecl();
+  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(D);
+
+  /* This checker is disabled if we are in a non-instance function because
+   * we don't know what the dependencies are. Symbolic execution based
+   * checkers complement our checks by taking care of what happens in non
+   * instance functions.
+   */
+  if(!CMD || CMD->isStatic())
+    return;
+
+  const Type *CXXObjectTy = CMD->getThisType(C.getASTContext()).getTypePtrOrNull();
+  assert(CXXObjectTy && "UDC: CXXObjectTy can't be null");
 
   /* Get the FQ field name */
   const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
   const std::string FieldName = ND->getQualifiedNameAsString();
 
-  // Report bug
   /* This is used by reportBug to sneak in name of the undefined field
    * Note: We don't mangle Fieldname because it's not a VarDecl and non
    * VarDecls cannot be mangled.
@@ -170,92 +280,70 @@ void UseDefChecker::encodeBugInfoAndReportBug(const MemberExpr *ME,
   // Call stack is written to EncodedBugInfo
   dumpCallsOnStack(C);
 
+  /* We branch here depending on Context being Ctor or otherwise.
+   * The idea is simple: Report a bug if we are in Ctor context;
+   * otherwise store diagnostics for deferred checking against
+   * Ctor info.
+   */
+  const CXXMethodDecl *TLD = dyn_cast<CXXMethodDecl>(C.getTopLevelDecl());
+  if(!TLD)
+    return;
+
+  if (!isa<CXXConstructorDecl>(TLD)){
+    storeDiagnostics(cast<const Decl>(ND), ME->getMemberLoc(), CXXObjectTy);
+    /// This taint means we found a potentially undefined class member
+    C.addCSTaint(cast<const Decl>(ND));
+  }
+//  else{
+//    if (ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())
+//      reportBug(ME->getSourceRange(), C);
+//  }
+  return;
+}
+
+#if 0
+void UseDefChecker::reportBug(SourceRange SR, CheckerContext &C) const {
+  /* Don't terminate path since path termination can mean that Ctor is
+   * not fully visited e.g., checkEndFunction() on Ctor is not triggered.
+   */
+  ExplodedNode *N = C.addTransition(C.getState());
+  if (!N)
+    return;
+
+  const char *name = "Undefined CXX object checker";
+  const char *desc = "Flags potential uses of undefined CXX object fields";
+
+  if (!BT)
+    BT.reset(new BuiltinBug(this, name, desc));
+
   StringRef Message = "Potentially uninitialized object field";
-  reportBug(Message, ME->getSourceRange(), C);
+  BugReport *R = new BugReport(*BT, Message, N);
 
-  return;
-}
-
-void UseDefChecker::clearContextIfRequired(CheckerContext &C) const {
-
-  /* We store the top most stack frame context (sfc) in the checker state.
-   * Context is equal to the sfc at the tail of the stack i.e., the outer
-   * most caller. Definitions in the context are preserved till
-   * the tail sfc changes. This prunes false positives
-   * in cases where the call leading to a member field definition
-   * preceeds use of that field.
-   *
-   * Note: This does not affect false positives arising out of
-   * path visitation logic of the PS engine in clang SA. What are
-   * pruned out are false positives that are flagged when both use
-   * and def are triggered in the same procedure but might actually happen
-   * interprocedurally. In the example below, def happens in a different
-   * procedure than where def is actually triggered. Earlier, we weren't
-   * taking care of this. Now we do.
-   * e.g.
-   *
-   * foo::def() { x = 0; }
-   * foo::use() { def(); if(!x) do_something() }
-   */
-
-   const StackFrameContext *cSFC = getTopStackFrame(C);
-   if(pSFC != cSFC){
-       pSFC = cSFC;
-       contextTaintSet.clear();
-   }
-
-  return;
-}
-
-const StackFrameContext* UseDefChecker::getTopStackFrame(CheckerContext &C) {
-
-  /* getStackFrame returns the current stack frame context i.e.,
-   * the stack frame context of the procedure we are in at this
-   * point.
-   */
-  const StackFrameContext *SFC = C.getStackFrame();
-  assert(SFC && "Checker context getStackFrame returned null!");
-
-  // If already in top frame simply return current stack frame
-  if(C.inTopFrame())
-    return SFC;
-
-  /* Nested retrieval of top most stack frame. The logic
-   * for this has been borrowed from dumpStack() impl.
-   * There is a little twist here. We assume that Stack
-   * frame contexts are always layered one on top of another.
-   * There are three kinds of contexts: (1) block (2) scope
-   * and (3) stackframe. We make an assertion if there is a
-   * non-stackframe kind Parent of a stackframe kind Child.
-   * Hope the expectation here is aligned with reality.
-   */
-  for (const LocationContext *LCtx = C.getLocationContext();
-      LCtx; LCtx = LCtx->getParent()) {
-      if(LCtx->getKind() == LocationContext::ContextKind::StackFrame)
-         SFC = cast<StackFrameContext>(LCtx);
-      /* It doesn't make sense to continue if parent is
-       * not a stack frame. I imagine stack frames stacked
-       * together and not interspersed between other frame types
-       * like Scope or Block.
-       */
-      else
-	  llvm_unreachable("This can't be! We are not in the top most"
-	      " stack frame but parent of location context is not a StackFrame kind.");
+  for (EBIIteratorTy i = EncodedBugInfo.begin(),
+        e = EncodedBugInfo.end(); i != e; ++i) {
+      R->addExtraText(*i);
   }
 
-  return SFC;
+  R->addRange(SR);
+  C.emitReport(R);
+
+  return;
+}
+#endif
+
+void UseDefChecker::storeDiagnostics(const Decl *D, SourceLocation SL,
+                                     const Type *Ty) const {
+  DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(D);
+  if (I != DiagnosticsInfo.end())
+    return;
+
+  typedef std::pair<const Decl *, DiagPairTy> KVPair;
+  I = DiagnosticsInfo.insert(KVPair(D, DiagPairTy(EncodedBugInfo, SLTyPairTy(SL, Ty)))).first;
+  assert(I != DiagnosticsInfo.end());
+  return;
 }
 
-// This can be a private static function
 bool UseDefChecker::isCXXThisExpr(const Expr *E) {
-  /* Remove clang inserted implicit casts before
-   * continuing. Otherwise, statements like this
-   *     int x = this->member
-   * bail out because casting (this->member) to
-   * MemberExpr before removing casts returns
-   * null. This shouldn't affect LHS with no
-   * implicit casts
-   */
   const MemberExpr *ME = dyn_cast<MemberExpr>(E->IgnoreImpCasts());
 
   if(!ME)
@@ -272,71 +360,49 @@ bool UseDefChecker::isCXXThisExpr(const Expr *E) {
   return true;
 }
 
-void UseDefChecker::reportBug(StringRef Message,
-                               SourceRange SR,
-                               CheckerContext &C) const {
-  ExplodedNode *N = C.generateSink();
+void UseDefChecker::reportBug(AnalysisManager &Mgr, BugReporter &BR,
+                              const Decl *D) const {
+
   const char *name = "Undefined CXX object checker";
   const char *desc = "Flags potential uses of undefined CXX object fields";
 
-  if (!N)
-    return;
+  StringRef Message = "Potentially uninitialized object field";
+
+  DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(D);
+
+  ETLTy EBI = std::get<0>(I->second);
+  SourceLocation SL = std::get<0>(std::get<1>(I->second));
+
+  PathDiagnosticLocation l(SL, Mgr.getSourceManager());
 
   if (!BT)
     BT.reset(new BuiltinBug(this, name, desc));
 
-  BugReport *R = new BugReport(*BT, Message, N);
+  BugReport *R = new BugReport(*BT, Message, l);
 
-  /* We use BugReport's addExtraText(std::string S) to
-   * pass meta data to bug report. We can possibly hijack
-   * this to encode <Undef Field, Call Stack>
-   * Note that only HTML report consumers are able to deal
-   * with this meta data. Plist probably won't do anything
-   * about it.
-   */
-
-  /* Iterate through EncodedBugInfo adding Extra text with
-   * each iteration.
-   */
-  for (EBIIteratorTy i = EncodedBugInfo.begin(),
-      e = EncodedBugInfo.end(); i != e; ++i) {
+  for (EBIIteratorTy i = EBI.begin(),
+      e = EBI.end(); i != e; ++i) {
       R->addExtraText(*i);
    }
 
-  R->addRange(SR);
-  C.emitReport(R);
-
-  return;
+  BR.emitReport(R);
 }
 
 void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
                                   CheckerContext &C) const {
 
   /* Return if not a logical NOT operator */
-  if(UO->getOpcode() != UO_LNot)
+  if (UO->getOpcode() != UO_LNot)
     return;
 
-  /* This is serious: Clang SA PS path hack should force visit Ctor before
-   * visiting anything else.
-   */
-  if(abortEval(C))
+  if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
     return;
 
   /* Ignore implicit casts */
   Expr *E = UO->getSubExpr()->IgnoreImpCasts();
 
-  if(!isCXXThisExpr(E))
+  if (!isCXXThisExpr(E))
     return;
-
-  clearContextIfRequired(C);
-
-  /* Bail if possible
-   * We check if
-   * 	1. Expr is a this expr AND
-   * 	2. If (1) is true
-   * 	   a. If there is no body for ctor
-   * 	   of class to which member expr belongs
-   */
 
   const MemberExpr *ME = dyn_cast<MemberExpr>(E);
   assert(ME && "UDC: ME can't be null here");
@@ -344,8 +410,8 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
   const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
   assert(ND && "UDC: ND can't be null here");
 
-  if(isElementUndefined(ND))
-    encodeBugInfoAndReportBug(ME, C);
+  if (!isTaintedInContext(ND, C))
+    encodeBugInfo(ME, C);
 
   return;
 }
@@ -360,28 +426,20 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
   if(!isCXXThisExpr(RHS) && !isCXXThisExpr(LHS))
     return;
 
-  if(abortEval(C))
-    return;
-
-  clearContextIfRequired(C);
-
   bool isDef = true;
   switch(BO->getOpcode()){
     case BO_Assign:
-      if(isCtorOnStack(C))
-        isDef = trackMembersInAssign(BO, Ctor, C);
-      else
-        isDef = trackMembersInAssign(BO, Context, C);
-
+      isDef = trackMembersInAssign(BO, C);
       // Report bug.
       if(!isDef){
-          /* The predicate !isCtorOnStack(C) is meant to weed out false warnings
+          /* The predicate C.getTopLevelDecl() is meant to weed out false warnings
            * of fields being used in Ctor being undefined. I am not sure why this happens but
            * I am pretty sure these are false alerts.
            */
-          assert(!isCtorOnStack(C) && "Undefined RHS in Ctor stack should not be flagged.");
+          assert(!isa<CXXConstructorDecl>(C.getTopLevelDecl())
+                 && "Undefined RHS in Ctor stack should not be flagged.");
           const MemberExpr *MeRHS = dyn_cast<MemberExpr>(RHS);
-          encodeBugInfoAndReportBug(MeRHS, C);
+          encodeBugInfo(MeRHS, C);
       }
       break;
     case BO_Mul:
@@ -402,17 +460,30 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
     case BO_Or:
     case BO_LAnd:
     case BO_LOr:
+      /* In taintclient-checkerv1.7, we permitted warnings in the Ctor
+       * analysis context with the added logic that we only flag
+       * undefined use if we know for sure that all initializations
+       * in Ctor context have been tainted.
+       * It turns out this decision is prone to Toctou flaw. Suppose that
+       * at the time of check, Ctor is not visited but it gets visited
+       * during the course of emitting bug report.
+       * To counter this, we disable checking for undefined use
+       * in Ctor analysis decl contexts altogether.
+       */
+      if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
+	return;
+
       if(isCXXThisExpr(LHS)){
 	const MemberExpr *MELHS = dyn_cast<MemberExpr>(LHS);
 	const NamedDecl *NDLHS = dyn_cast<NamedDecl>(MELHS->getMemberDecl());
-	if(isElementUndefined(NDLHS))
-	  encodeBugInfoAndReportBug(MELHS, C);
+	if(!isTaintedInContext(NDLHS, C))
+	  encodeBugInfo(MELHS, C);
       }
       if(isCXXThisExpr(RHS)){
 	const MemberExpr *MERHS = dyn_cast<MemberExpr>(RHS);
 	const NamedDecl *NDRHS = dyn_cast<NamedDecl>(MERHS->getMemberDecl());
-	if(isElementUndefined(NDRHS))
-	  encodeBugInfoAndReportBug(MERHS, C);
+	if(!isTaintedInContext(NDRHS, C))
+	  encodeBugInfo(MERHS, C);
       }
       break;
 
@@ -429,7 +500,6 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
  * happens, onus is on caller to report bug
  */
 bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
-                                          SetKind S,
                                           CheckerContext &C) const {
 
   /* Check if LHS/RHS is a member expression */
@@ -455,7 +525,7 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    */
   if(MeRHS && isCXXThisExpr(rhs)){
     const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
-    if(isElementUndefined(NDR) && !isCtorOnStack(C))
+    if(!isTaintedInContext(NDR, C) && !isa<CXXConstructorDecl>(C.getTopLevelDecl()))
 	return false;
   }
 
@@ -466,81 +536,36 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    */
   if(MeLHS && isCXXThisExpr(lhs)){
     const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
-    addNDToTaintSet(S, NDL);
+    addNDToTaintSet(NDL, C);
   }
   return true;
 }
 
-#if 0
-void UseDefChecker::checkLocation(SVal Loc, bool IsLoad, const Stmt *S, CheckerContext &C) const {
+/* Utility function for inserting fields into a given set */
+void UseDefChecker::addNDToTaintSet(const NamedDecl *ND,
+                                    CheckerContext &C) const {
+  ProgramStateRef State = C.getState();
 
-}
-#endif
+  const Decl *TLD = C.getTopLevelDecl();
+//  bool Ctor = ((isa<CXXConstructorDecl>(TLD)) &&
+//      (TLD == C.getLocationContext()->getAnalysisDeclContext()->getDecl()));
 
-/* Visit AST nodes for method definitions : CXXMethodDecl is a misnomer
- * This visitor is not path sensitive
- */
-void UseDefChecker::checkASTDecl(const CXXConstructorDecl *CtorDecl,
-                                  AnalysisManager &Mgr,
-                                  BugReporter &BR) const {
-
-  /* We don't need to check if Ctor has a body because Clang SA
-   * has been patched to not do PS analysis if Ctor body is missing.
-   */
-  for(auto *I : CtorDecl->inits()){
-      CXXCtorInitializer *CtorInitializer = I;
-      /* FIXME: Choose the right variant(s) of
-       * is*MemberInitializer call
-       */
-      if(!CtorInitializer->isMemberInitializer())
-	continue;
-
-      /* Turns out isMemberInitializer() also returns
-       * member fields initialized in class decl
-       */
-
-      // Update state map
-      const FieldDecl *FD = CtorInitializer->getMember();
-
-      const NamedDecl *ND = dyn_cast<NamedDecl>(FD);
-      assert(ND && "UDC: ND can't be null here");
-
-      addNDToTaintSet(Ctor, ND);
-
-      // Add init expressions to taint set if necessary
-      const Expr *E = CtorInitializer->getInit()->IgnoreImpCasts();
-      if(isCXXThisExpr(E)){
-	const MemberExpr *MEI = dyn_cast<MemberExpr>(E);
-	const NamedDecl *NDI = dyn_cast<NamedDecl>(MEI->getMemberDecl());
-	addNDToTaintSet(Ctor, NDI);
-      }
+  if (isa<CXXConstructorDecl>(TLD)) {
+    /* This taints definitions in top level ctor function summary */
+    C.addCSTaint(cast<const Decl>(ND));
   }
 
-  return;
+  /* This taints definitions in analysis decl context */
+  State = State->add<TaintDeclsInContext>(cast<const Decl>(ND));
+  if(State != C.getState())
+    C.addTransition(State);
 }
 
-/* Utility function for inserting fields into a given set */
-void UseDefChecker::addNDToTaintSet(SetKind Set,
-				const NamedDecl *ND) const {
-      Set ? contextTaintSet.insert(ND) : ctorTaintSet.insert(ND);
-}
-
-/* Utility function for finding a field in a given set */
-bool UseDefChecker::findElementInSet(const NamedDecl *ND,
-                           SetKind S) const {
-  InitializedFieldsSetTy Set = (S ? contextTaintSet : ctorTaintSet);
-  return (Set.find(ND) != Set.end());
-}
-
-bool UseDefChecker::isElementUndefined(const NamedDecl *ND) const {
-  /* If element is in neither Ctor not context
-   * sets, it's undefined
-   */
-  if(!(findElementInSet(ND, Ctor)) &&
-      !(findElementInSet(ND, Context)))
-      return true;
-
-  return false;
+bool UseDefChecker::isTaintedInContext(const NamedDecl *ND,
+                                       CheckerContext &C) const {
+  ProgramStateRef State = C.getState();
+  const Decl *D = cast<const Decl>(ND);
+  return State->contains<TaintDeclsInContext>(D);
 }
 
 /* This utility function must be called from reportBug before
@@ -618,50 +643,6 @@ std::string UseDefChecker::getMangledNameAsString(const NamedDecl *ND,
   }
 
   return ND->getQualifiedNameAsString();
-}
-
-bool UseDefChecker::isLCCtorDecl(const LocationContext *LC) {
-
-  if(LC->getKind() != LocationContext::ContextKind::StackFrame)
-    llvm_unreachable("getADC says we are not in a stack frame!");
-
-  const AnalysisDeclContext *ADC = LC->getAnalysisDeclContext();
-  assert(ADC && "getAnalysisDecl returned null while dumping"
-         " calls on stack");
-
-  // This gives us the function declaration being visited
-  const Decl *D = ADC->getDecl();
-  assert(D && "ADC getDecl returned null while dumping"
-         " calls on stack");
-
-  if(!isa<CXXConstructorDecl>(D))
-    return false;
-
-  return true;
-}
-
-bool UseDefChecker::isCtorOnStack(CheckerContext &C) {
-
-  const LocationContext *LC = C.getLocationContext();
-
-  if(C.inTopFrame())
-    return isLCCtorDecl(LC);
-
-  for (LC = C.getLocationContext(); LC; LC = LC->getParent()) {
-      if(LC->getKind() == LocationContext::ContextKind::StackFrame){
-	if(isLCCtorDecl(LC))
-	  return true;
-      }
-      /* It doesn't make sense to continue if parent is
-       * not a stack frame. I imagine stack frames stacked
-       * together and not interspersed between other frame types
-       * like Scope or Block.
-       */
-      else
-	  llvm_unreachable("dumpCallsOnStack says this is not a stack frame!");
-  }
-
-  return false;
 }
 
 // Register plugin!
