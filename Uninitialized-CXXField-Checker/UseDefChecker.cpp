@@ -181,19 +181,27 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 
 	const Decl *BuggyDecl = cast<const Decl>(II->first);
 
+	const FieldDecl *FD = cast<const FieldDecl>(BuggyDecl);
+	assert(FD && "UDC: BuggyDecl is not a FieldDecl");
+	const RecordDecl *RD = FD->getParent();
+	assert(RD && "UDC: BuggyDecl has no RecordDecl");
+	const CXXRecordDecl *CRD = cast<const CXXRecordDecl>(RD);
+	assert(CRD && "UDC: BuggyDecl has no CXXRecordDecl");
+
 	/// 5. If Ctor of object to which BuggyDecl belongs has been visited
 	DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(BuggyDecl);
 	const Type *Ty = std::get<1>(std::get<1>(I->second));
 
-	if(ctorsVisited.find(Ty) == ctorsVisited.end())
+	// There is a user declared Ctor that we haven't visited. So don't flag warning.
+	if(CRD->hasUserDeclaredConstructor() &&	(ctorsVisited.find(Ty) == ctorsVisited.end()))
 	  continue;
 
-	SourceLocation SL = std::get<0>(std::get<1>(I->second));
-	SourceManager &SM = Mgr.getSourceManager();
+//	SourceLocation SL = std::get<0>(std::get<1>(I->second));
+//	SourceManager &SM = Mgr.getSourceManager();
 
 	/// Warnings in header files are potential false positives
-	if(!SM.isWrittenInMainFile(SL))
-	  continue;
+//	if(!SM.isWrittenInMainFile(SL))
+//	  continue;
 
 	/// Report bug!
 	reportBug(Mgr, BR, BuggyDecl);
