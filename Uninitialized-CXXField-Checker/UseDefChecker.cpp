@@ -27,12 +27,11 @@
 using namespace clang;
 using namespace ento;
 
-typedef llvm::DenseSet<const Type *>	 				CtorsVisitedTy;
+typedef llvm::DenseSet<const CXXRecordDecl *>				CtorsVisitedTy;
 typedef llvm::DenseSet<const Decl *>					CtorsDeclSetTy;
 typedef BugReport::ExtraTextList					ETLTy;
 typedef ETLTy::const_iterator 						EBIIteratorTy;
-typedef std::pair<SourceLocation, const Type *>				SLTyPairTy;
-typedef std::pair<ETLTy, SLTyPairTy>					DiagPairTy;
+typedef std::pair<ETLTy, SourceLocation>				DiagPairTy;
 typedef llvm::DenseMap<const Decl *, DiagPairTy>			DiagnosticsInfoTy;
 typedef const FunctionSummariesTy::MapTy				FSMapTy;
 typedef const FunctionSummariesTy::FunctionSummary::TLDTaintMapTy	TLDTMTy;
@@ -67,7 +66,7 @@ private:
   bool trackMembersInAssign(const BinaryOperator *BO, CheckerContext &C) const;
   void encodeBugInfo(const MemberExpr *ME, CheckerContext &C) const;
   void dumpCallsOnStack(CheckerContext &C) const;
-  void storeDiagnostics(const Decl *D, SourceLocation SL, const Type *Ty) const;
+  void storeDiagnostics(const Decl *D, SourceLocation SL) const;
   void taintCtorInits(const CXXConstructorDecl *CCD, CheckerContext &C) const;
 
   // Static utility functions
@@ -136,11 +135,11 @@ void UseDefChecker::checkEndFunction(CheckerContext &C) const {
    */
   taintCtorInits(dyn_cast<CXXConstructorDecl>(CMD), C);
 
-  const Type *CXXObjectTy = CMD->getThisType(ADC->getASTContext()).getTypePtrOrNull();
-  assert(CXXObjectTy && "UDC: CXXObjectTy can't be null");
+  const CXXRecordDecl *CRD = CMD->getParent();
+  assert(CRD && "UDC: CXXRecordDecl can't be null");
 
-  if(ctorsVisited.find(CXXObjectTy) == ctorsVisited.end())
-      ctorsVisited.insert(CXXObjectTy);
+  if(ctorsVisited.find(CRD) == ctorsVisited.end())
+      ctorsVisited.insert(CRD);
 
 }
 
@@ -188,20 +187,18 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 	const CXXRecordDecl *CRD = cast<const CXXRecordDecl>(RD);
 	assert(CRD && "UDC: BuggyDecl has no CXXRecordDecl");
 
-	/// 5. If Ctor of object to which BuggyDecl belongs has been visited
-	DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(BuggyDecl);
-	const Type *Ty = std::get<1>(std::get<1>(I->second));
-
 	// There is a user declared Ctor that we haven't visited. So don't flag warning.
-	if(CRD->hasUserDeclaredConstructor() &&	(ctorsVisited.find(Ty) == ctorsVisited.end()))
+	if(CRD->hasUserDeclaredConstructor() &&	(ctorsVisited.find(CRD) == ctorsVisited.end()))
 	  continue;
 
-//	SourceLocation SL = std::get<0>(std::get<1>(I->second));
-//	SourceManager &SM = Mgr.getSourceManager();
+	DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(BuggyDecl);
+	SourceLocation SL = std::get<1>(I->second);
+	SourceManager &SM = Mgr.getSourceManager();
 
-	/// Warnings in header files are potential false positives
-//	if(!SM.isWrittenInMainFile(SL))
-//	  continue;
+	// FIXME: Warnings in header files are potential false positives
+	// Genesis is Crbug 411177.
+	if(!SM.isWrittenInMainFile(SL))
+	  continue;
 
 	/// Report bug!
 	reportBug(Mgr, BR, BuggyDecl);
@@ -254,22 +251,6 @@ bool UseDefChecker::abortEval(CheckerContext &C) const {
 
 void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
                                   CheckerContext &C) const {
-
-  const AnalysisDeclContext *ADC = C.getLocationContext()->getAnalysisDeclContext();
-  const Decl *D = ADC->getDecl();
-  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(D);
-
-  /* This checker is disabled if we are in a non-instance function because
-   * we don't know what the dependencies are. Symbolic execution based
-   * checkers complement our checks by taking care of what happens in non
-   * instance functions.
-   */
-  if(!CMD || CMD->isStatic())
-    return;
-
-  const Type *CXXObjectTy = CMD->getThisType(C.getASTContext()).getTypePtrOrNull();
-  assert(CXXObjectTy && "UDC: CXXObjectTy can't be null");
-
   /* Get the FQ field name */
   const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
   const std::string FieldName = ND->getQualifiedNameAsString();
@@ -288,24 +269,14 @@ void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
   // Call stack is written to EncodedBugInfo
   dumpCallsOnStack(C);
 
-  /* We branch here depending on Context being Ctor or otherwise.
-   * The idea is simple: Report a bug if we are in Ctor context;
-   * otherwise store diagnostics for deferred checking against
-   * Ctor info.
-   */
-  const CXXMethodDecl *TLD = dyn_cast<CXXMethodDecl>(C.getTopLevelDecl());
-  if(!TLD)
-    return;
+  const Decl *FD = C.getTopLevelDecl();
 
-  if (!isa<CXXConstructorDecl>(TLD)){
-    storeDiagnostics(cast<const Decl>(ND), ME->getMemberLoc(), CXXObjectTy);
+  if (!isa<CXXConstructorDecl>(FD)){
+    storeDiagnostics(cast<const Decl>(ND), ME->getMemberLoc());
     /// This taint means we found a potentially undefined class member
     C.addCSTaint(cast<const Decl>(ND));
   }
-//  else{
-//    if (ctorsVisited.find(CXXObjectTy) != ctorsVisited.end())
-//      reportBug(ME->getSourceRange(), C);
-//  }
+
   return;
 }
 
@@ -339,14 +310,13 @@ void UseDefChecker::reportBug(SourceRange SR, CheckerContext &C) const {
 }
 #endif
 
-void UseDefChecker::storeDiagnostics(const Decl *D, SourceLocation SL,
-                                     const Type *Ty) const {
+void UseDefChecker::storeDiagnostics(const Decl *D, SourceLocation SL) const {
   DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(D);
   if (I != DiagnosticsInfo.end())
     return;
 
   typedef std::pair<const Decl *, DiagPairTy> KVPair;
-  I = DiagnosticsInfo.insert(KVPair(D, DiagPairTy(EncodedBugInfo, SLTyPairTy(SL, Ty)))).first;
+  I = DiagnosticsInfo.insert(KVPair(D, DiagPairTy(EncodedBugInfo, SL))).first;
   assert(I != DiagnosticsInfo.end());
   return;
 }
@@ -355,14 +325,6 @@ bool UseDefChecker::isCXXThisExpr(const Expr *E) {
   const MemberExpr *ME = dyn_cast<MemberExpr>(E->IgnoreImpCasts());
 
   if(!ME)
-    return false;
-
-  const Expr *BaseExpr = ME->getBase();
-  if(!BaseExpr)
-    return false;
-
-  const CXXThisExpr *CTE = dyn_cast<CXXThisExpr>(BaseExpr);
-  if(!CTE)
     return false;
 
   return true;
@@ -379,7 +341,7 @@ void UseDefChecker::reportBug(AnalysisManager &Mgr, BugReporter &BR,
   DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(D);
 
   ETLTy EBI = std::get<0>(I->second);
-  SourceLocation SL = std::get<0>(std::get<1>(I->second));
+  SourceLocation SL = std::get<1>(I->second);
 
   PathDiagnosticLocation l(SL, Mgr.getSourceManager());
 
