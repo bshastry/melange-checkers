@@ -73,7 +73,7 @@ private:
   void taintCtorInits(const CXXConstructorDecl *CCD, CheckerContext &C) const;
 
   // Static utility functions
-  static bool isCXXThisExpr(const Expr *E);
+  static bool isCXXFieldDecl(const Expr *E);
   static std::string getADCQualifiedNameAsStringRef(const LocationContext *LC);
   static std::string getMangledNameAsString(const NamedDecl *ND, ASTContext &ASTC);
 };
@@ -106,7 +106,7 @@ void UseDefChecker::taintCtorInits(const CXXConstructorDecl *CCD,
 
       // Add init expressions to taint set if necessary
       const Expr *E = CtorInitializer->getInit()->IgnoreImpCasts();
-      if(isCXXThisExpr(E)){
+      if(isCXXFieldDecl(E)){
 	const MemberExpr *MEI = dyn_cast<MemberExpr>(E);
 	const NamedDecl *NDI = dyn_cast<NamedDecl>(MEI->getMemberDecl());
 	addNDToTaintSet(NDI, C);
@@ -220,6 +220,10 @@ void UseDefChecker::checkPreCall(const CallEvent &Call,
   const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D);
 
   for (unsigned i = 0, e = Call.getNumArgs(); i != e; ++i) {
+
+      if (!isCXXFieldDecl(Call.getArgExpr(i)->IgnoreImpCasts()))
+	continue;
+
       const ParmVarDecl *ParamDecl = nullptr;
       const MemberExpr *CAE = dyn_cast<const MemberExpr>(Call.getArgExpr(i)->IgnoreImpCasts());
 
@@ -282,11 +286,15 @@ void UseDefChecker::storeDiagnostics(const Decl *D, SourceLocation SL) const {
   return;
 }
 
-bool UseDefChecker::isCXXThisExpr(const Expr *E) {
+bool UseDefChecker::isCXXFieldDecl(const Expr *E) {
   const MemberExpr *ME = dyn_cast<MemberExpr>(E->IgnoreImpCasts());
 
-  if(!ME)
-    return false;
+  if (!ME)
+      return false;
+
+  const FieldDecl *FD = dyn_cast<FieldDecl>(ME->getMemberDecl());
+  if (!(FD && isa<CXXRecordDecl>(FD->getParent())))
+      return false;
 
   return true;
 }
@@ -332,7 +340,7 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
   /* Ignore implicit casts */
   Expr *E = UO->getSubExpr()->IgnoreImpCasts();
 
-  if (!isCXXThisExpr(E))
+  if (!isCXXFieldDecl(E))
     return;
 
   const MemberExpr *ME = dyn_cast<MemberExpr>(E);
@@ -354,7 +362,7 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
   const Expr *LHS = BO->getLHS()->IgnoreImpCasts();
 
   // FIXME: Should we care about non this* objects. Use cases?
-  if(!isCXXThisExpr(RHS) && !isCXXThisExpr(LHS))
+  if(!isCXXFieldDecl(RHS) && !isCXXFieldDecl(LHS))
     return;
 
   bool isDef = true;
@@ -404,13 +412,13 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
       if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
 	return;
 
-      if(isCXXThisExpr(LHS)){
+      if(isCXXFieldDecl(LHS)){
 	const MemberExpr *MELHS = dyn_cast<MemberExpr>(LHS);
 	const NamedDecl *NDLHS = dyn_cast<NamedDecl>(MELHS->getMemberDecl());
 	if(!isTaintedInContext(NDLHS, C))
 	  encodeBugInfo(MELHS, C);
       }
-      if(isCXXThisExpr(RHS)){
+      if(isCXXFieldDecl(RHS)){
 	const MemberExpr *MERHS = dyn_cast<MemberExpr>(RHS);
 	const NamedDecl *NDRHS = dyn_cast<NamedDecl>(MERHS->getMemberDecl());
 	if(!isTaintedInContext(NDRHS, C))
@@ -453,7 +461,7 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    * anything else. Exception being this->rhs in ctor being undefined.
    * See comment in checkPreStmt.
    */
-  if(MeRHS && isCXXThisExpr(rhs)){
+  if(MeRHS && isCXXFieldDecl(rhs)){
     const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
     if(!isTaintedInContext(NDR, C) && !isa<CXXConstructorDecl>(C.getTopLevelDecl()))
 	return false;
@@ -464,7 +472,7 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    * expectation is that it is abnormal to have uninitialized RHS in the
    * process of object creation.
    */
-  if(MeLHS && isCXXThisExpr(lhs)){
+  if(MeLHS && isCXXFieldDecl(lhs)){
     const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
     addNDToTaintSet(NDL, C);
   }
