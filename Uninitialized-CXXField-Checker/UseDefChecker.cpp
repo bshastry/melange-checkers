@@ -17,6 +17,7 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/FunctionSummary.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/ExprCXX.h"
@@ -43,6 +44,7 @@ namespace {
 class UseDefChecker : public Checker< check::PreStmt<UnaryOperator>,
 				      check::PreStmt<BinaryOperator>,
 				      check::EndFunction,
+				      check::PreCall,
 				      check::EndOfTranslationUnit> {
   mutable std::unique_ptr<BugType> BT;
   enum SetKind { Ctor, Context };
@@ -55,6 +57,7 @@ public:
   void checkPreStmt(const BinaryOperator *BO, CheckerContext &C) const;
   void checkPreStmt(const UnaryOperator *UO, CheckerContext &C) const;
   void checkEndFunction(CheckerContext &C) const;
+  void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
   void checkEndOfTranslationUnit(const TranslationUnitDecl *TU, AnalysisManager &Mgr,
                                   BugReporter &BR) const;
 
@@ -184,12 +187,14 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 	assert(FD && "UDC: BuggyDecl is not a FieldDecl");
 	const RecordDecl *RD = FD->getParent();
 	assert(RD && "UDC: BuggyDecl has no RecordDecl");
-	const CXXRecordDecl *CRD = cast<const CXXRecordDecl>(RD);
-	assert(CRD && "UDC: BuggyDecl has no CXXRecordDecl");
 
-	// There is a user declared Ctor that we haven't visited. So don't flag warning.
-	if(CRD->hasUserDeclaredConstructor() &&	(ctorsVisited.find(CRD) == ctorsVisited.end()))
-	  continue;
+	if (isa<CXXRecordDecl>(RD)) {
+	  const CXXRecordDecl *CRD = cast<const CXXRecordDecl>(RD);
+	  // There is a user declared Ctor that we haven't visited.
+	  // So don't flag warning.
+	  if(CRD->hasUserDeclaredConstructor() && (ctorsVisited.find(CRD) == ctorsVisited.end()))
+	    continue;
+	}
 
 	DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(BuggyDecl);
 	SourceLocation SL = std::get<1>(I->second);
@@ -206,48 +211,32 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
   } // end of function summary for loop
 }
 
-#if 0
-bool UseDefChecker::abortEval(CheckerContext &C) const {
-  /* If Ctor is not on the stack and we haven't visited Ctor at least
-   * once, terminate path. Update CtorVisited flag if it is false and
-   * we have Ctor on stack.
-   */
+void UseDefChecker::checkPreCall(const CallEvent &Call,
+                                 CheckerContext &C) const {
 
-  const AnalysisDeclContext *ADC = C.getLocationContext()->getAnalysisDeclContext();
-  const Decl *D = ADC->getDecl();
+  if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
+    return;
 
-  const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(D);
+  const Decl *D = Call.getDecl();
+  const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D);
 
-  /* This checker is disabled if we are in a non-instance function because
-   * we don't know what the dependencies are.
-   */
-  if(!CMD || CMD->isStatic())
-    return true;
+  for (unsigned i = 0, e = Call.getNumArgs(); i != e; ++i) {
+    const ParmVarDecl *ParamDecl = nullptr;
+    const MemberExpr *CAE = dyn_cast<const MemberExpr>(Call.getArgExpr(i)->IgnoreImpCasts());
 
-  const Type *CXXObjectTy = CMD->getThisType(ADC->getASTContext()).getTypePtrOrNull();
-  assert(CXXObjectTy && "UDC: CXXObjectTy can't be null");
+    if (FD && i < FD->getNumParams())
+      ParamDecl = FD->getParamDecl(i);
 
-  if(isCtorOnStack(C)){
-     if(ctorsVisited.find(CXXObjectTy) == ctorsVisited.end())
-	 ctorsVisited.insert(CXXObjectTy);
-     return false;
+    if (ParamDecl && CAE) {
+	if (const NamedDecl *ND = dyn_cast<NamedDecl>(ParamDecl)) {
+	  if (!isTaintedInContext(ND, C))
+	    encodeBugInfo(CAE, C);
+	}
+    }
   }
 
-  /* If we are not visiting a Ctor Decl and Ctor Decl corresponding to method
-   * being explored has not been visited, terminate path exploration.
-   * Else if, we are visiting a Ctor Decl that has not been visited already,
-   * add it to Visited.
-   */
-  if(ctorsVisited.find(CXXObjectTy) == ctorsVisited.end()){
-      ExplodedNode *N = C.generateSink();
-      if(!N)
-	llvm::errs() << "Generate sink led to an empty node\n";
-      return true;
-  }
-
-  return false;
+  return;
 }
-#endif
 
 void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
                                   CheckerContext &C) const {
@@ -279,36 +268,6 @@ void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
 
   return;
 }
-
-#if 0
-void UseDefChecker::reportBug(SourceRange SR, CheckerContext &C) const {
-  /* Don't terminate path since path termination can mean that Ctor is
-   * not fully visited e.g., checkEndFunction() on Ctor is not triggered.
-   */
-  ExplodedNode *N = C.addTransition(C.getState());
-  if (!N)
-    return;
-
-  const char *name = "Undefined CXX object checker";
-  const char *desc = "Flags potential uses of undefined CXX object fields";
-
-  if (!BT)
-    BT.reset(new BuiltinBug(this, name, desc));
-
-  StringRef Message = "Potentially uninitialized object field";
-  BugReport *R = new BugReport(*BT, Message, N);
-
-  for (EBIIteratorTy i = EncodedBugInfo.begin(),
-        e = EncodedBugInfo.end(); i != e; ++i) {
-      R->addExtraText(*i);
-  }
-
-  R->addRange(SR);
-  C.emitReport(R);
-
-  return;
-}
-#endif
 
 void UseDefChecker::storeDiagnostics(const Decl *D, SourceLocation SL) const {
   DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(D);
@@ -465,9 +424,8 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
 }
 
 /* Utility function to track uses and defs in assignment
- * statements.
- * Returns false if RHS is not in defs set. When this
- * happens, onus is on caller to report bug
+ * statements. Returns false if RHS is not in defs set. When this
+ * happens, onus is on caller to report bug.
  */
 bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
                                           CheckerContext &C) const {
@@ -517,8 +475,6 @@ void UseDefChecker::addNDToTaintSet(const NamedDecl *ND,
   ProgramStateRef State = C.getState();
 
   const Decl *TLD = C.getTopLevelDecl();
-//  bool Ctor = ((isa<CXXConstructorDecl>(TLD)) &&
-//      (TLD == C.getLocationContext()->getAnalysisDeclContext()->getDecl()));
 
   if (isa<CXXConstructorDecl>(TLD)) {
     /* This taints definitions in top level ctor function summary */
