@@ -187,14 +187,13 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
 	assert(FD && "UDC: BuggyDecl is not a FieldDecl");
 	const RecordDecl *RD = FD->getParent();
 	assert(RD && "UDC: BuggyDecl has no RecordDecl");
+	const CXXRecordDecl *CRD = cast<const CXXRecordDecl>(RD);
+	assert(CRD && "UDC: BuggyDecl has no CXXRecordDecl");
 
-	if (isa<CXXRecordDecl>(RD)) {
-	  const CXXRecordDecl *CRD = cast<const CXXRecordDecl>(RD);
-	  // There is a user declared Ctor that we haven't visited.
-	  // So don't flag warning.
-	  if(CRD->hasUserDeclaredConstructor() && (ctorsVisited.find(CRD) == ctorsVisited.end()))
-	    continue;
-	}
+	// There is a user declared Ctor that we haven't visited.
+	// So don't flag warning.
+	if(CRD->hasUserDeclaredConstructor() && (ctorsVisited.find(CRD) == ctorsVisited.end()))
+	  continue;
 
 	DiagnosticsInfoTy::iterator I = DiagnosticsInfo.find(BuggyDecl);
 	SourceLocation SL = std::get<1>(I->second);
@@ -221,18 +220,21 @@ void UseDefChecker::checkPreCall(const CallEvent &Call,
   const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D);
 
   for (unsigned i = 0, e = Call.getNumArgs(); i != e; ++i) {
-    const ParmVarDecl *ParamDecl = nullptr;
-    const MemberExpr *CAE = dyn_cast<const MemberExpr>(Call.getArgExpr(i)->IgnoreImpCasts());
+      const ParmVarDecl *ParamDecl = nullptr;
+      const MemberExpr *CAE = dyn_cast<const MemberExpr>(Call.getArgExpr(i)->IgnoreImpCasts());
 
-    if (FD && i < FD->getNumParams())
-      ParamDecl = FD->getParamDecl(i);
+      if (FD && i < FD->getNumParams())
+	ParamDecl = FD->getParamDecl(i);
 
-    if (ParamDecl && CAE) {
-	if (const NamedDecl *ND = dyn_cast<NamedDecl>(ParamDecl)) {
-	  if (!isTaintedInContext(ND, C))
-	    encodeBugInfo(CAE, C);
-	}
-    }
+      if (ParamDecl && CAE) {
+	  const FieldDecl *FiD = dyn_cast<FieldDecl>(CAE->getMemberDecl());
+
+	  if (FiD && isa<CXXRecordDecl>(FiD->getParent())) {
+	      const NamedDecl *ND = dyn_cast<NamedDecl>(CAE->getMemberDecl());
+	      if (ND && !isTaintedInContext(ND, C))
+		  encodeBugInfo(CAE, C);
+	  }
+      }
   }
 
   return;
