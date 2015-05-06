@@ -293,7 +293,17 @@ bool UseDefChecker::isCXXFieldDecl(const Expr *E) {
       return false;
 
   const FieldDecl *FD = dyn_cast<FieldDecl>(ME->getMemberDecl());
-  if (!(FD && isa<CXXRecordDecl>(FD->getParent())))
+
+  if (!FD)
+      return false;
+
+  if (!isa<CXXRecordDecl>(FD->getParent()))
+      return false;
+
+  const CXXRecordDecl *CRD = dyn_cast<CXXRecordDecl>(FD->getParent());
+
+  // We don't want to be dealing with struct/union fields
+  if (CRD->isCLike())
       return false;
 
   return true;
