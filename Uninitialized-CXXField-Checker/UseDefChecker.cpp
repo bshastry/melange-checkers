@@ -138,11 +138,16 @@ void UseDefChecker::checkEndFunction(CheckerContext &C) const {
    */
   taintCtorInits(dyn_cast<CXXConstructorDecl>(CMD), C);
 
-  const CXXRecordDecl *CRD = CMD->getParent();
-  assert(CRD && "UDC: CXXRecordDecl can't be null");
+  const Decl *TLD = C.getTopLevelDecl();
 
-  if(ctorsVisited.find(CRD) == ctorsVisited.end())
-      ctorsVisited.insert(CRD);
+  if (isa<CXXConstructorDecl>(TLD)) {
+      const CXXMethodDecl *TLDCMD = cast<CXXMethodDecl>(TLD);
+      const CXXRecordDecl *CRD = TLDCMD->getParent();
+      assert(CRD && "UDC: CXXRecordDecl can't be null");
+
+      if(ctorsVisited.find(CRD) == ctorsVisited.end())
+	  ctorsVisited.insert(CRD);
+  }
 
 }
 
