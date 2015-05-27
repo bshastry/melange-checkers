@@ -124,10 +124,10 @@ void UseDefChecker::checkEndFunction(CheckerContext &C) const {
   const AnalysisDeclContext *ADC = C.getLocationContext()->getAnalysisDeclContext();
   const CXXMethodDecl *CMD = dyn_cast<CXXMethodDecl>(ADC->getDecl());
 
-  if(!CMD || CMD->isStatic())
+  if (!CMD || CMD->isStatic())
     return;
 
-  if(!isa<CXXConstructorDecl>(CMD))
+  if (!isa<CXXConstructorDecl>(CMD))
     return;
 
   /* Absent AST visitor, we postpone tainting of Ctor inits
@@ -145,8 +145,10 @@ void UseDefChecker::checkEndFunction(CheckerContext &C) const {
       const CXXRecordDecl *CRD = TLDCMD->getParent();
       assert(CRD && "UDC: CXXRecordDecl can't be null");
 
-      if(ctorsVisited.find(CRD) == ctorsVisited.end())
+      if (ctorsVisited.find(CRD) == ctorsVisited.end()) {
+	  taintCtorInits(dyn_cast<CXXConstructorDecl>(TLD), C);
 	  ctorsVisited.insert(CRD);
+      }
   }
 
 }
