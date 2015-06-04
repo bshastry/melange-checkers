@@ -44,7 +44,7 @@ namespace {
 class UseDefChecker : public Checker< check::PreStmt<UnaryOperator>,
 				      check::PreStmt<BinaryOperator>,
 				      check::EndFunction,
-				      check::PreCall,
+				      check::BranchCondition,
 				      check::EndOfTranslationUnit> {
   mutable std::unique_ptr<BugType> BT;
   enum SetKind { Ctor, Context };
@@ -57,7 +57,7 @@ public:
   void checkPreStmt(const BinaryOperator *BO, CheckerContext &C) const;
   void checkPreStmt(const UnaryOperator *UO, CheckerContext &C) const;
   void checkEndFunction(CheckerContext &C) const;
-  void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
+  void checkBranchCondition(const Stmt *Condition, CheckerContext &Ctx) const;
   void checkEndOfTranslationUnit(const TranslationUnitDecl *TU, AnalysisManager &Mgr,
                                   BugReporter &BR) const;
 
@@ -217,38 +217,33 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
   } // end of function summary for loop
 }
 
-void UseDefChecker::checkPreCall(const CallEvent &Call,
-                                 CheckerContext &C) const {
+void UseDefChecker::checkBranchCondition(const Stmt *Condition,
+                                         CheckerContext &C) const {
 
   if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
     return;
 
-  const Decl *D = Call.getDecl();
-  const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D);
+  /* Switch on Stmt->getStmtClass() OR take a whitelist approach.
+     Do the use checking for desired stmt classes here.
+  */
 
-  for (unsigned i = 0, e = Call.getNumArgs(); i != e; ++i) {
-
-      if (!isCXXFieldDecl(Call.getArgExpr(i)->IgnoreImpCasts()))
-	continue;
-
-      const ParmVarDecl *ParamDecl = nullptr;
-      const MemberExpr *CAE = dyn_cast<const MemberExpr>(Call.getArgExpr(i)->IgnoreImpCasts());
-
-      if (FD && i < FD->getNumParams())
-	ParamDecl = FD->getParamDecl(i);
-
-      if (ParamDecl && CAE) {
-	  const FieldDecl *FiD = dyn_cast<FieldDecl>(CAE->getMemberDecl());
-
-	  if (FiD && isa<CXXRecordDecl>(FiD->getParent())) {
-	      const NamedDecl *ND = dyn_cast<NamedDecl>(CAE->getMemberDecl());
-	      if (ND && !isTaintedInContext(ND, C))
-		  encodeBugInfo(CAE, C);
-	  }
-      }
-  }
+  /* Ignore implicit casts */
+//  Expr *E = UO->getSubExpr()->IgnoreImpCasts();
+//
+//  if (!isCXXFieldDecl(E))
+//    return;
+//
+//  const MemberExpr *ME = dyn_cast<MemberExpr>(E);
+//  assert(ME && "UDC: ME can't be null here");
+//
+//  const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
+//  assert(ND && "UDC: ND can't be null here");
+//
+//  if (!isTaintedInContext(ND, C))
+//    encodeBugInfo(ME, C);
 
   return;
+
 }
 
 void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
@@ -347,16 +342,11 @@ void UseDefChecker::reportBug(AnalysisManager &Mgr, BugReporter &BR,
 void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
                                   CheckerContext &C) const {
 
-  /* Return if not a logical NOT operator */
-  if (UO->getOpcode() != UO_LNot)
-    return;
-
   if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
     return;
 
   /* Ignore implicit casts */
   Expr *E = UO->getSubExpr()->IgnoreImpCasts();
-
   if (!isCXXFieldDecl(E))
     return;
 
@@ -366,8 +356,29 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
   const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
   assert(ND && "UDC: ND can't be null here");
 
-  if (!isTaintedInContext(ND, C))
-    encodeBugInfo(ME, C);
+  switch (UO->getOpcode()) {
+    case UO_PostInc:
+    case UO_PostDec:
+    case UO_PreInc:
+    case UO_PreDec:
+    case UO_Minus:	// Additive inverse
+    case UO_Not:
+    case UO_LNot:
+      if (!isTaintedInContext(ND, C))
+        encodeBugInfo(ME, C);
+
+      break;
+
+    case UO_Plus:
+    case UO_AddrOf:
+    case UO_Deref:
+    case UO_Real:
+    case UO_Imag:
+    case UO_Extension:
+    default:
+      break;
+
+  }
 
   return;
 }
