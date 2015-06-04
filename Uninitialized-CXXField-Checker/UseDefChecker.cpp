@@ -43,6 +43,7 @@ namespace {
 
 class UseDefChecker : public Checker< check::EndFunction,
 				      check::BranchCondition,
+				      check::PreStmt<BinaryOperator>,
 				      check::EndOfTranslationUnit> {
   mutable std::unique_ptr<BugType> BT;
   enum SetKind { Ctor, Context };
@@ -52,6 +53,7 @@ class UseDefChecker : public Checker< check::EndFunction,
   mutable DiagnosticsInfoTy		DiagnosticsInfo;
 
 public:
+  void checkPreStmt(const BinaryOperator *BO, CheckerContext &C) const;
   void checkEndFunction(CheckerContext &C) const;
   void checkBranchCondition(const Stmt *Condition, CheckerContext &Ctx) const;
   void checkEndOfTranslationUnit(const TranslationUnitDecl *TU, AnalysisManager &Mgr,
@@ -264,6 +266,21 @@ void UseDefChecker::checkBranchCondition(const Stmt *Condition,
   branchStmtChecker(Condition, C);
 }
 
+void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
+                                 CheckerContext &C) const {
+
+  if (BO->getOpcode() != BO_Assign)
+    return;
+
+  const Expr *RHS = BO->getRHS()->IgnoreImpCasts();
+  const Expr *LHS = BO->getLHS()->IgnoreImpCasts();
+
+  if(!isCXXFieldDecl(RHS) && !isCXXFieldDecl(LHS))
+    return;
+
+  trackMembersInAssign(BO, C);
+}
+
 void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
                                   CheckerContext &C) const {
   /* Get the FQ field name */
@@ -379,15 +396,13 @@ void UseDefChecker::checkBinaryOp(const BinaryOperator *BO,
   const Expr *RHS = BO->getRHS()->IgnoreImpCasts();
   const Expr *LHS = BO->getLHS()->IgnoreImpCasts();
 
-  // FIXME: Should we care about non this* objects. Use cases?
   if(!isCXXFieldDecl(RHS) && !isCXXFieldDecl(LHS))
     return;
 
-  switch(BO->getOpcode()){
-    case BO_Assign: {
-      trackMembersInAssign(BO, C);
+  switch (BO->getOpcode()) {
+    default:
       break;
-    }
+
     case BO_Mul:
     case BO_Div:
     case BO_Rem:
@@ -424,9 +439,6 @@ void UseDefChecker::checkBinaryOp(const BinaryOperator *BO,
 
       break;
     }
-
-    default:
-      break;
   }
 }
 
