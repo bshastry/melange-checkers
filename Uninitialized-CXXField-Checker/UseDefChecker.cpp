@@ -41,9 +41,7 @@ typedef const FunctionSummariesTy::FunctionSummary::DTPair	 	DTPairTy;
 
 namespace {
 
-class UseDefChecker : public Checker< check::PreStmt<UnaryOperator>,
-				      check::PreStmt<BinaryOperator>,
-				      check::EndFunction,
+class UseDefChecker : public Checker< check::EndFunction,
 				      check::BranchCondition,
 				      check::EndOfTranslationUnit> {
   mutable std::unique_ptr<BugType> BT;
@@ -54,8 +52,6 @@ class UseDefChecker : public Checker< check::PreStmt<UnaryOperator>,
   mutable DiagnosticsInfoTy		DiagnosticsInfo;
 
 public:
-  void checkPreStmt(const BinaryOperator *BO, CheckerContext &C) const;
-  void checkPreStmt(const UnaryOperator *UO, CheckerContext &C) const;
   void checkEndFunction(CheckerContext &C) const;
   void checkBranchCondition(const Stmt *Condition, CheckerContext &Ctx) const;
   void checkEndOfTranslationUnit(const TranslationUnitDecl *TU, AnalysisManager &Mgr,
@@ -65,7 +61,8 @@ private:
   void addNDToTaintSet(const NamedDecl *ND, CheckerContext &C) const;
   bool isTaintedInContext(const NamedDecl *ND, CheckerContext &C) const;
   void reportBug(AnalysisManager &Mgr, BugReporter &BR, const Decl *D) const;
-//  void reportBug(SourceRange SR, CheckerContext &C) const;
+  void checkUnaryOp(const UnaryOperator *UO, CheckerContext &C) const;
+  void checkBinaryOp(const BinaryOperator *BO, CheckerContext &C) const;
   void checkUseIfMemberExpr(const Expr *E, CheckerContext &C) const;
   void trackMembersInAssign(const BinaryOperator *BO, CheckerContext &C) const;
   void branchStmtChecker(const Stmt *Condition, CheckerContext &C) const;
@@ -243,6 +240,17 @@ void UseDefChecker::branchStmtChecker(const Stmt *Condition,
       }
       break;
     }
+    case Stmt::CompoundAssignOperatorClass:
+    case Stmt::BinaryOperatorClass: {
+      const BinaryOperator *BO = cast<BinaryOperator>(Condition);
+      checkBinaryOp(BO, C);
+      break;
+    }
+    case Stmt::UnaryOperatorClass: {
+      const UnaryOperator *UO = cast<UnaryOperator>(Condition);
+      checkUnaryOp(UO, C);
+      break;
+    }
   }
   return;
 }
@@ -365,39 +373,7 @@ void UseDefChecker::checkUseIfMemberExpr(const Expr *E,
     encodeBugInfo(ME, C);
 }
 
-void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
-                                  CheckerContext &C) const {
-
-  if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
-    return;
-
-  /* Ignore implicit casts */
-  Expr *E = UO->getSubExpr()->IgnoreImpCasts();
-
-  switch (UO->getOpcode()) {
-    case UO_PostInc:
-    case UO_PostDec:
-    case UO_PreInc:
-    case UO_PreDec:
-    case UO_Minus:	// Additive inverse
-    case UO_Not:
-    case UO_LNot: {
-      checkUseIfMemberExpr(E, C);
-      break;
-    }
-    case UO_Plus:
-    case UO_AddrOf:
-    case UO_Deref:
-    case UO_Real:
-    case UO_Imag:
-    case UO_Extension:
-    default:
-      break;
-  }
-  return;
-}
-
-void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
+void UseDefChecker::checkBinaryOp(const BinaryOperator *BO,
                                   CheckerContext &C) const {
 
   const Expr *RHS = BO->getRHS()->IgnoreImpCasts();
@@ -452,8 +428,37 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
     default:
       break;
   }
+}
 
-  return;
+void UseDefChecker::checkUnaryOp(const UnaryOperator *UO,
+                                  CheckerContext &C) const {
+
+  if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
+    return;
+
+  /* Ignore implicit casts */
+  Expr *E = UO->getSubExpr()->IgnoreImpCasts();
+
+  switch (UO->getOpcode()) {
+    case UO_PostInc:
+    case UO_PostDec:
+    case UO_PreInc:
+    case UO_PreDec:
+    case UO_Minus:	// Additive inverse
+    case UO_Not:
+    case UO_LNot: {
+      checkUseIfMemberExpr(E, C);
+      break;
+    }
+    case UO_Plus:
+    case UO_AddrOf:
+    case UO_Deref:
+    case UO_Real:
+    case UO_Imag:
+    case UO_Extension:
+    default:
+      break;
+  }
 }
 
 /* Utility function to track uses and defs in assignment
