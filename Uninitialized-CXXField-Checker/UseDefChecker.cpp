@@ -66,7 +66,9 @@ private:
   bool isTaintedInContext(const NamedDecl *ND, CheckerContext &C) const;
   void reportBug(AnalysisManager &Mgr, BugReporter &BR, const Decl *D) const;
 //  void reportBug(SourceRange SR, CheckerContext &C) const;
-  bool trackMembersInAssign(const BinaryOperator *BO, CheckerContext &C) const;
+  void checkUseIfMemberExpr(const Expr *E, CheckerContext &C) const;
+  void trackMembersInAssign(const BinaryOperator *BO, CheckerContext &C) const;
+  void branchStmtChecker(const Stmt *Condition, CheckerContext &C) const;
   void encodeBugInfo(const MemberExpr *ME, CheckerContext &C) const;
   void dumpCallsOnStack(CheckerContext &C) const;
   void storeDiagnostics(const Decl *D, SourceLocation SL) const;
@@ -217,33 +219,41 @@ void UseDefChecker::checkEndOfTranslationUnit(const TranslationUnitDecl *TU,
   } // end of function summary for loop
 }
 
+void UseDefChecker::branchStmtChecker(const Stmt *Condition,
+                                      CheckerContext &C) const {
+
+  const Expr *E = dyn_cast<Expr>(Condition);
+  switch (Condition->getStmtClass()) {
+    default:
+      break;
+    case Stmt::ImplicitCastExprClass: {
+      branchStmtChecker(E->IgnoreImpCasts(), C);
+      break;
+    }
+    case Stmt::MemberExprClass: {
+      checkUseIfMemberExpr(E, C);
+      break;
+    }
+    case Stmt::CompoundStmtClass: {
+      const CompoundStmt *CompStmt = cast<CompoundStmt>(Condition);
+      CompoundStmt::const_body_iterator Iter = CompStmt->body_begin();
+      while (Iter != CompStmt->body_end()) {
+	  branchStmtChecker(*Iter, C);
+	  ++Iter;
+      }
+      break;
+    }
+  }
+  return;
+}
+
 void UseDefChecker::checkBranchCondition(const Stmt *Condition,
                                          CheckerContext &C) const {
 
   if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
     return;
 
-  /* Switch on Stmt->getStmtClass() OR take a whitelist approach.
-     Do the use checking for desired stmt classes here.
-  */
-
-  /* Ignore implicit casts */
-//  Expr *E = UO->getSubExpr()->IgnoreImpCasts();
-//
-//  if (!isCXXFieldDecl(E))
-//    return;
-//
-//  const MemberExpr *ME = dyn_cast<MemberExpr>(E);
-//  assert(ME && "UDC: ME can't be null here");
-//
-//  const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
-//  assert(ND && "UDC: ND can't be null here");
-//
-//  if (!isTaintedInContext(ND, C))
-//    encodeBugInfo(ME, C);
-
-  return;
-
+  branchStmtChecker(Condition, C);
 }
 
 void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
@@ -339,14 +349,9 @@ void UseDefChecker::reportBug(AnalysisManager &Mgr, BugReporter &BR,
   BR.emitReport(R);
 }
 
-void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
-                                  CheckerContext &C) const {
+void UseDefChecker::checkUseIfMemberExpr(const Expr *E,
+                                         CheckerContext &C) const {
 
-  if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
-    return;
-
-  /* Ignore implicit casts */
-  Expr *E = UO->getSubExpr()->IgnoreImpCasts();
   if (!isCXXFieldDecl(E))
     return;
 
@@ -356,6 +361,19 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
   const NamedDecl *ND = dyn_cast<NamedDecl>(ME->getMemberDecl());
   assert(ND && "UDC: ND can't be null here");
 
+  if (!isTaintedInContext(ND, C))
+    encodeBugInfo(ME, C);
+}
+
+void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
+                                  CheckerContext &C) const {
+
+  if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
+    return;
+
+  /* Ignore implicit casts */
+  Expr *E = UO->getSubExpr()->IgnoreImpCasts();
+
   switch (UO->getOpcode()) {
     case UO_PostInc:
     case UO_PostDec:
@@ -363,12 +381,10 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
     case UO_PreDec:
     case UO_Minus:	// Additive inverse
     case UO_Not:
-    case UO_LNot:
-      if (!isTaintedInContext(ND, C))
-        encodeBugInfo(ME, C);
-
+    case UO_LNot: {
+      checkUseIfMemberExpr(E, C);
       break;
-
+    }
     case UO_Plus:
     case UO_AddrOf:
     case UO_Deref:
@@ -377,9 +393,7 @@ void UseDefChecker::checkPreStmt(const UnaryOperator *UO,
     case UO_Extension:
     default:
       break;
-
   }
-
   return;
 }
 
@@ -393,22 +407,11 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
   if(!isCXXFieldDecl(RHS) && !isCXXFieldDecl(LHS))
     return;
 
-  bool isDef = true;
   switch(BO->getOpcode()){
-    case BO_Assign:
-      isDef = trackMembersInAssign(BO, C);
-      // Report bug.
-      if(!isDef){
-          /* The predicate C.getTopLevelDecl() is meant to weed out false warnings
-           * of fields being used in Ctor being undefined. I am not sure why this happens but
-           * I am pretty sure these are false alerts.
-           */
-          assert(!isa<CXXConstructorDecl>(C.getTopLevelDecl())
-                 && "Undefined RHS in Ctor stack should not be flagged.");
-          const MemberExpr *MeRHS = dyn_cast<MemberExpr>(RHS);
-          encodeBugInfo(MeRHS, C);
-      }
+    case BO_Assign: {
+      trackMembersInAssign(BO, C);
       break;
+    }
     case BO_Mul:
     case BO_Div:
     case BO_Rem:
@@ -426,7 +429,7 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
     case BO_Xor:
     case BO_Or:
     case BO_LAnd:
-    case BO_LOr:
+    case BO_LOr: {
       /* In taintclient-checkerv1.7, we permitted warnings in the Ctor
        * analysis context with the added logic that we only flag
        * undefined use if we know for sure that all initializations
@@ -440,19 +443,11 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
       if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
 	return;
 
-      if(isCXXFieldDecl(LHS)){
-	const MemberExpr *MELHS = dyn_cast<MemberExpr>(LHS);
-	const NamedDecl *NDLHS = dyn_cast<NamedDecl>(MELHS->getMemberDecl());
-	if(!isTaintedInContext(NDLHS, C))
-	  encodeBugInfo(MELHS, C);
-      }
-      if(isCXXFieldDecl(RHS)){
-	const MemberExpr *MERHS = dyn_cast<MemberExpr>(RHS);
-	const NamedDecl *NDRHS = dyn_cast<NamedDecl>(MERHS->getMemberDecl());
-	if(!isTaintedInContext(NDRHS, C))
-	  encodeBugInfo(MERHS, C);
-      }
+      checkUseIfMemberExpr(LHS, C);
+      checkUseIfMemberExpr(RHS, C);
+
       break;
+    }
 
     default:
       break;
@@ -465,7 +460,7 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
  * statements. Returns false if RHS is not in defs set. When this
  * happens, onus is on caller to report bug.
  */
-bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
+void UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
                                           CheckerContext &C) const {
 
   /* Check if LHS/RHS is a member expression */
@@ -491,8 +486,10 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    */
   if(MeRHS && isCXXFieldDecl(rhs)){
     const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
-    if(!isTaintedInContext(NDR, C) && !isa<CXXConstructorDecl>(C.getTopLevelDecl()))
-	return false;
+    if(!isTaintedInContext(NDR, C) && !isa<CXXConstructorDecl>(C.getTopLevelDecl())) {
+      encodeBugInfo(MeRHS, C);
+      return;
+    }
   }
 
   /* Add lhs to set if it is a this* member. We silently add LHS exprs
@@ -504,7 +501,6 @@ bool UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
     const NamedDecl *NDL = dyn_cast<NamedDecl>(MeLHS->getMemberDecl());
     addNDToTaintSet(NDL, C);
   }
-  return true;
 }
 
 /* Utility function for inserting fields into a given set */
