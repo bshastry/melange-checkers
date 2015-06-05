@@ -376,8 +376,16 @@ void UseDefChecker::reportBug(AnalysisManager &Mgr, BugReporter &BR,
 
 void UseDefChecker::checkUseIfMemberExpr(const Expr *E,
                                          CheckerContext &C) const {
+  bool hasLvalToRvalCast = false;
+  while (isa<ImplicitCastExpr>(E)) {
+      const ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(E);
+      if (!hasLvalToRvalCast && (ICE->getCastKind() == CK_LValueToRValue))
+	hasLvalToRvalCast = true;
 
-  if (!isCXXFieldDecl(E))
+      E = ICE->getSubExpr();
+  }
+
+  if (!isCXXFieldDecl(E) || !hasLvalToRvalCast)
     return;
 
   const MemberExpr *ME = dyn_cast<MemberExpr>(E);
@@ -434,8 +442,8 @@ void UseDefChecker::checkBinaryOp(const BinaryOperator *BO,
       if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
 	return;
 
-      checkUseIfMemberExpr(LHS, C);
-      checkUseIfMemberExpr(RHS, C);
+      checkUseIfMemberExpr(BO->getLHS(), C);
+      checkUseIfMemberExpr(BO->getRHS(), C);
 
       break;
     }
@@ -451,6 +459,9 @@ void UseDefChecker::checkUnaryOp(const UnaryOperator *UO,
   /* Ignore implicit casts */
   Expr *E = UO->getSubExpr()->IgnoreImpCasts();
 
+  if (!isCXXFieldDecl(E))
+    return;
+
   switch (UO->getOpcode()) {
     case UO_PostInc:
     case UO_PostDec:
@@ -459,7 +470,7 @@ void UseDefChecker::checkUnaryOp(const UnaryOperator *UO,
     case UO_Minus:	// Additive inverse
     case UO_Not:
     case UO_LNot: {
-      checkUseIfMemberExpr(E, C);
+      checkUseIfMemberExpr(UO->getSubExpr(), C);
       break;
     }
     case UO_Plus:
@@ -503,9 +514,18 @@ void UseDefChecker::trackMembersInAssign(const BinaryOperator *BO,
    */
   if(MeRHS && isCXXFieldDecl(rhs)){
     const NamedDecl *NDR = dyn_cast<NamedDecl>(MeRHS->getMemberDecl());
+
     if(!isTaintedInContext(NDR, C) && !isa<CXXConstructorDecl>(C.getTopLevelDecl())) {
-      encodeBugInfo(MeRHS, C);
-      return;
+      const Expr *TE = BO->getRHS();
+
+      while (isa<ImplicitCastExpr>(TE)) {
+	  const ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(TE);
+	  if (ICE->getCastKind() == CK_LValueToRValue) {
+	      encodeBugInfo(MeRHS, C);
+	      return;
+	  }
+	  TE = ICE->getSubExpr();
+      }
     }
   }
 
