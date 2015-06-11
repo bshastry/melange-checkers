@@ -401,8 +401,27 @@ void UseDefChecker::checkUseIfMemberExpr(const Expr *E,
 void UseDefChecker::checkBinaryOp(const BinaryOperator *BO,
                                   CheckerContext &C) const {
 
+  /* In taintclient-checkerv1.7, we permitted warnings in the Ctor
+   * analysis context with the added logic that we only flag
+   * undefined use if we know for sure that all initializations
+   * in Ctor context have been tainted.
+   * It turns out this decision is prone to Toctou flaw. Suppose that
+   * at the time of check, Ctor is not visited but it gets visited
+   * during the course of emitting bug report.
+   * To counter this, we disable checking for undefined use
+   * in Ctor analysis decl contexts altogether.
+   */
+  if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
+    return;
+
   const Expr *RHS = BO->getRHS()->IgnoreImpCasts();
   const Expr *LHS = BO->getLHS()->IgnoreImpCasts();
+
+  if (const UnaryOperator *UOR = dyn_cast<UnaryOperator>(RHS))
+    checkBranchCondition(UOR, C);
+
+  if (const UnaryOperator *UOL = dyn_cast<UnaryOperator>(LHS))
+    checkBranchCondition(UOL, C);
 
   if(!isCXXFieldDecl(RHS) && !isCXXFieldDecl(LHS))
     return;
@@ -429,21 +448,11 @@ void UseDefChecker::checkBinaryOp(const BinaryOperator *BO,
     case BO_Or:
     case BO_LAnd:
     case BO_LOr: {
-      /* In taintclient-checkerv1.7, we permitted warnings in the Ctor
-       * analysis context with the added logic that we only flag
-       * undefined use if we know for sure that all initializations
-       * in Ctor context have been tainted.
-       * It turns out this decision is prone to Toctou flaw. Suppose that
-       * at the time of check, Ctor is not visited but it gets visited
-       * during the course of emitting bug report.
-       * To counter this, we disable checking for undefined use
-       * in Ctor analysis decl contexts altogether.
-       */
-      if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
-	return;
+      if (isCXXFieldDecl(LHS))
+	checkUseIfMemberExpr(BO->getLHS(), C);
 
-      checkUseIfMemberExpr(BO->getLHS(), C);
-      checkUseIfMemberExpr(BO->getRHS(), C);
+      if (isCXXFieldDecl(RHS))
+	checkUseIfMemberExpr(BO->getRHS(), C);
 
       break;
     }
@@ -458,6 +467,11 @@ void UseDefChecker::checkUnaryOp(const UnaryOperator *UO,
 
   /* Ignore implicit casts */
   Expr *E = UO->getSubExpr()->IgnoreImpCasts();
+
+  if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(E)) {
+    checkBranchCondition(BO, C);
+    return;
+  }
 
   if (!isCXXFieldDecl(E))
     return;
