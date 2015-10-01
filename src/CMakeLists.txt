@@ -13,7 +13,7 @@ set(LLVM_BUILD_DIR /home/bhargava/workspace/llvm)
 set(CLANG_BUILD_DIR ${LLVM_BUILD_DIR}/tools/clang)
 
 # Flags to compile checker code
-set (CMAKE_CXX_FLAGS "-std=c++11 -fPIC -fno-common -Wcast-qual -fno-strict-aliasing -Wno-long-long -Wall -Wno-unused-parameter -Wwrite-strings -fno-rtti")
+set (CMAKE_CXX_FLAGS "-std=c++11 -fPIC -pedantic -fno-common -Wcast-qual -fno-strict-aliasing -Wno-long-long -Wall -Wno-unused-parameter -Wwrite-strings -fno-rtti")
 
 # Add paths to include and libs here
 add_definitions(${LLVM_DEFINITIONS})
