@@ -26,7 +26,12 @@ include_directories( "${LLVM_SRC_DIR}/include"
 link_directories(${LLVM_LIBRARY_DIRS})
 
 # Make a shared library out of the checker. Can be loaded by scan-build -load-plugin
-add_library( usedef-checker SHARED UseDefChecker.cpp )
+add_library( usedef-checker SHARED
+		UseDefChecker.cpp
+		UseAfterFreeChecker.cpp
+		TypeCastingVulnChecker.cpp
+		Registry.cpp
+)
 
 #### Not necessary
 

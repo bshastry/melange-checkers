@@ -12,8 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
-#include "clang/StaticAnalyzer/Core/CheckerRegistry.h"
+#include "UseDefChecker.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/FunctionSummary.h"
@@ -23,62 +22,10 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/Mangle.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/ADT/DenseSet.h"
 
 using namespace clang;
-using namespace ento;
-
-typedef llvm::DenseSet<const CXXRecordDecl *>				CtorsVisitedTy;
-typedef llvm::DenseSet<const Decl *>					CtorsDeclSetTy;
-typedef BugReport::ExtraTextList					ETLTy;
-typedef ETLTy::const_iterator 						EBIIteratorTy;
-typedef std::pair<ETLTy, SourceLocation>				DiagPairTy;
-typedef llvm::DenseMap<const Decl *, DiagPairTy>			DiagnosticsInfoTy;
-typedef const FunctionSummariesTy::MapTy				FSMapTy;
-typedef const FunctionSummariesTy::FunctionSummary::TLDTaintMapTy	TLDTMTy;
-typedef const FunctionSummariesTy::FunctionSummary::DTPair	 	DTPairTy;
-
-
-namespace {
-
-class UseDefChecker : public Checker< check::EndFunction,
-				      check::BranchCondition,
-				      check::PreStmt<BinaryOperator>,
-				      check::EndOfTranslationUnit> {
-  mutable std::unique_ptr<BugType> BT;
-  enum SetKind { Ctor, Context };
-
-  mutable CtorsVisitedTy 	 	ctorsVisited;
-  mutable ETLTy 			EncodedBugInfo;
-  mutable DiagnosticsInfoTy		DiagnosticsInfo;
-
-public:
-  void checkPreStmt(const BinaryOperator *BO, CheckerContext &C) const;
-  void checkEndFunction(CheckerContext &C) const;
-  void checkBranchCondition(const Stmt *Condition, CheckerContext &Ctx) const;
-  void checkEndOfTranslationUnit(const TranslationUnitDecl *TU, AnalysisManager &Mgr,
-                                  BugReporter &BR) const;
-
-private:
-  void addNDToTaintSet(const NamedDecl *ND, CheckerContext &C) const;
-  bool isTaintedInContext(const NamedDecl *ND, CheckerContext &C) const;
-  void reportBug(AnalysisManager &Mgr, BugReporter &BR, const Decl *D) const;
-  void checkUnaryOp(const UnaryOperator *UO, CheckerContext &C) const;
-  void checkBinaryOp(const BinaryOperator *BO, CheckerContext &C) const;
-  void checkUseIfMemberExpr(const Expr *E, CheckerContext &C) const;
-  void trackMembersInAssign(const BinaryOperator *BO, CheckerContext &C) const;
-  void branchStmtChecker(const Stmt *Condition, CheckerContext &C) const;
-  void encodeBugInfo(const MemberExpr *ME, CheckerContext &C) const;
-  void dumpCallsOnStack(CheckerContext &C) const;
-  void storeDiagnostics(const Decl *D, SourceLocation SL) const;
-  void taintCtorInits(const CXXConstructorDecl *CCD, CheckerContext &C) const;
-
-  // Static utility functions
-  static bool isCXXFieldDecl(const Expr *E);
-  static std::string getADCQualifiedNameAsStringRef(const LocationContext *LC);
-  static std::string getMangledNameAsString(const NamedDecl *ND, ASTContext &ASTC);
-};
-} // end of anonymous namespace
+using namespace clang::ento;
+using namespace Melange;
 
 REGISTER_SET_WITH_PROGRAMSTATE(TaintDeclsInContext, const Decl*)
 
@@ -655,12 +602,3 @@ std::string UseDefChecker::getMangledNameAsString(const NamedDecl *ND,
 
   return ND->getQualifiedNameAsString();
 }
-
-// Register plugin!
-extern "C"
-void clang_registerCheckers(CheckerRegistry &registry) {
-  registry.addChecker<UseDefChecker>("alpha.security.UseDefChecker", "CXX UseDef Checker");
-}
-
-extern "C"
-const char clang_analyzerAPIVersionString[] = CLANG_ANALYZER_API_VERSION_STRING;
