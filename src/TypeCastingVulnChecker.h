@@ -13,13 +13,16 @@
 
 namespace Melange {
 
-class TypeCastingVulnChecker : public clang::ento::Checker<clang::ento::check::PreStmt<clang::ExplicitCastExpr>> {
+class TypeCastingVulnChecker : public clang::ento::Checker<clang::ento::check::PreStmt<clang::ExplicitCastExpr>,
+							   clang::ento::check::PreStmt<clang::CallExpr>> {
 public:
   void checkPreStmt(const clang::ExplicitCastExpr *ECE, clang::ento::CheckerContext &C) const;
+  void checkPreStmt(const clang::CallExpr *CE, clang::ento::CheckerContext &C) const;
 private:
   mutable std::unique_ptr<clang::ento::BugType> BT;
   void reportBug(clang::ento::CheckerContext &C, clang::SourceRange SR,
                  llvm::StringRef Message) const;
+  void handleAllocArg(const clang::Expr *E, clang::ento::CheckerContext &C) const;
 };
 } // end of Melange namespace
 
