@@ -1,17 +1,3 @@
-// UseDefChecker.h - Heuristics based checker for uses of potentially undef vals -*- C++ -*-
-//
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
-//===----------------------------------------------------------------------===//
-//
-// This files defines UseDefChecker, a custom checker that looks for
-// CXX field initialization and use patterns that tend to be buggy.
-//
-//===----------------------------------------------------------------------===//
-
 #ifndef MELANGE_USEDEFCHECKER_H
 #define MELANGE_USEDEFCHECKER_H
 
