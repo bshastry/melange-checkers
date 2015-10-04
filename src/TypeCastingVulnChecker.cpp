@@ -4,7 +4,7 @@ using namespace clang;
 using namespace ento;
 using namespace Melange;
 
-bool isBadCast(const ExplicitCastExpr *ECE, std::string &Message) {
+bool isUnsafeExpCast(const ExplicitCastExpr *ECE, std::string &Message) {
 
   const auto *ICE = dyn_cast<ImplicitCastExpr>(ECE->getSubExpr());
 
@@ -44,19 +44,65 @@ bool isBadCast(const ExplicitCastExpr *ECE, std::string &Message) {
   return true;
 }
 
+bool isUnsafeImpCast(const ImplicitCastExpr *ICE, std::string &Message) {
+  if (ICE->getCastKind() != CK_IntegralCast)
+    return false;
+
+  DEBUG_PRINT("Is integral cast");
+
+  const auto *lvalRvalCast = dyn_cast<ImplicitCastExpr>(ICE->getSubExpr());
+
+  if (!lvalRvalCast)
+    return false;
+
+  DEBUG_PRINT("Involves lvaltorval conv");
+
+  const auto *castDRE = dyn_cast<DeclRefExpr>(ICE->IgnoreParenImpCasts());
+
+  if (!castDRE)
+      return false;
+
+  DEBUG_PRINT("castee is declrefexpr");
+  // declrefexpr
+  const auto *VD = castDRE->getDecl();
+  auto castFromType = VD->getType();
+  auto castToType = cast<Expr>(ICE)->getType();
+
+  if (castFromType == castToType)
+    return false;
+
+  DEBUG_PRINT("castfrom type: " + castFromType.getAsString());
+  DEBUG_PRINT("castto type: " + castToType.getAsString());
+
+  Message = "Implicit cast from " + castFromType.getAsString() + " to " +
+			castToType.getAsString() + " may be unsafe.";
+
+  return true;
+}
+
 void TypeCastingVulnChecker::reportUnsafeExpCasts(const ExplicitCastExpr *ECE,
                                                   CheckerContext &C) const {
   std::string Message = "";
-  if (isBadCast(ECE, Message))
+  if (isUnsafeExpCast(ECE, Message))
     reportBug(C, ECE->getSourceRange(), Message);
+}
+
+void TypeCastingVulnChecker::reportUnsafeImpCasts(const ImplicitCastExpr *ICE,
+                                                  CheckerContext &C) const {
+  std::string Message = "";
+  if (isUnsafeImpCast(ICE, Message))
+    reportBug(C, ICE->getSourceRange(), Message);
 }
 
 void TypeCastingVulnChecker::handleAllocArg(const Expr *E, CheckerContext &C) const {
 
   const auto *ECE = dyn_cast<ExplicitCastExpr>(E->IgnoreParenImpCasts());
+  const auto *ICE = dyn_cast<ImplicitCastExpr>(E);
 
   if (ECE)
     reportUnsafeExpCasts(ECE, C);
+  else if (ICE)
+    reportUnsafeImpCasts(ICE, C);
 }
 
 void TypeCastingVulnChecker::checkPreStmt(const CallExpr *CE, CheckerContext &C) const {
@@ -82,8 +128,8 @@ void TypeCastingVulnChecker::checkPreStmt(const CallExpr *CE, CheckerContext &C)
   if ((index >= MALLOC_START) && (index <= MALLOC_END))
     handleAllocArg(CE->getArg(0),C);
   else if ((index >= CALLOC_START) && (index <= CALLOC_END)) {
-      handleAllocArg(CE->getArg(0), C);
-      handleAllocArg(CE->getArg(1), C);
+    handleAllocArg(CE->getArg(0), C);
+    handleAllocArg(CE->getArg(1), C);
   }
   else if ((index >= REALLOC_START) && (index <= REALLOC_END))
     handleAllocArg(CE->getArg(1), C);

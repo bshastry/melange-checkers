@@ -25,6 +25,8 @@ private:
   void handleAllocArg(const clang::Expr *E, clang::ento::CheckerContext &C) const;
   void reportUnsafeExpCasts(const clang::ExplicitCastExpr *ECE,
                             clang::ento::CheckerContext &C) const;
+  void reportUnsafeImpCasts(const clang::ImplicitCastExpr *ICE,
+                            clang::ento::CheckerContext &C) const;
 
   const std::vector<std::string> callNames =
       {"malloc", "xmalloc", "av_malloc", "av_mallocz", "srslte_vec_malloc",

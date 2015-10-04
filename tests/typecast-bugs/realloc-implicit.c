@@ -5,6 +5,6 @@ void f() {
    unsigned long j;
    i = j = 10;
    void *ptr = malloc(j);
-   ptr = realloc(ptr, (unsigned)i);
+   ptr = realloc(ptr, i);
    free(ptr);
 }

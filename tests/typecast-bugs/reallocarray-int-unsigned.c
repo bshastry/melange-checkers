@@ -2,7 +2,7 @@
 
 void f() {
    int i;
-   unsigned j;
+   unsigned long j;
    i = j = 10;
    void *ptr = malloc(j);
    ptr = reallocarray(ptr, (unsigned)i, j);
@@ -11,7 +11,7 @@ void f() {
 
 void g() {
    int i;
-   unsigned j;
+   unsigned long j;
    i = j = 10;
    void *ptr = malloc(j);
    ptr = reallocarray(ptr, j, (unsigned)i);

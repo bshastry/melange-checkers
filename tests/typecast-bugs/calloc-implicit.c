@@ -4,7 +4,7 @@ void f() {
    int i;
    unsigned long j;
    i = j = 10;
-   void *ptr = calloc((unsigned)i, j);
+   void *ptr = calloc(i, j);
    free(ptr);
 }
 
@@ -12,7 +12,7 @@ void g() {
    int i;
    unsigned long j;
    i = j = 10;
-   void *ptr = calloc(j, (unsigned)i);
+   void *ptr = calloc(j, i);
    free(ptr);
 }
 
