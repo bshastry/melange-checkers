@@ -44,11 +44,19 @@ bool isBadCast(const ExplicitCastExpr *ECE, std::string &Message) {
   return true;
 }
 
-void TypeCastingVulnChecker::handleAllocArg(const Expr *E, CheckerContext &C) const {
+void TypeCastingVulnChecker::reportUnsafeExpCasts(const ExplicitCastExpr *ECE,
+                                                  CheckerContext &C) const {
   std::string Message = "";
-  const auto *ECE = dyn_cast<ExplicitCastExpr>(E->IgnoreParenImpCasts());
-  if (ECE && isBadCast(ECE, Message))
+  if (isBadCast(ECE, Message))
     reportBug(C, ECE->getSourceRange(), Message);
+}
+
+void TypeCastingVulnChecker::handleAllocArg(const Expr *E, CheckerContext &C) const {
+
+  const auto *ECE = dyn_cast<ExplicitCastExpr>(E->IgnoreParenImpCasts());
+
+  if (ECE)
+    reportUnsafeExpCasts(ECE, C);
 }
 
 void TypeCastingVulnChecker::checkPreStmt(const CallExpr *CE, CheckerContext &C) const {
@@ -57,35 +65,29 @@ void TypeCastingVulnChecker::checkPreStmt(const CallExpr *CE, CheckerContext &C)
   if (!FD)
     return;
 
-  // stdlib calls
-  IdentifierInfo *II_malloc = &C.getASTContext().Idents.get("malloc");
-  IdentifierInfo *II_calloc = &C.getASTContext().Idents.get("calloc");
-  IdentifierInfo *II_realloc = &C.getASTContext().Idents.get("realloc");
-  IdentifierInfo *II_reallocarray = &C.getASTContext().Idents.get("reallocarray");
-  IdentifierInfo *II_memcpy = &C.getASTContext().Idents.get("memcpy");
-
-  // openssh wrappers
-  IdentifierInfo *II_xmalloc = &C.getASTContext().Idents.get("xmalloc");
-  IdentifierInfo *II_xcalloc = &C.getASTContext().Idents.get("xcalloc");
-  IdentifierInfo *II_xrealloc = &C.getASTContext().Idents.get("xrealloc");
-  IdentifierInfo *II_xreallocarray = &C.getASTContext().Idents.get("xreallocarray");
+  std::vector<IdentifierInfo *> IIvec;
+  for (auto &i : callNames)
+    IIvec.push_back(&C.getASTContext().Idents.get(i));
 
   const auto *funI = FD->getIdentifier();
+  auto iter = std::find(IIvec.begin(), IIvec.end(), funI);
 
-  if ((funI != II_malloc) && (funI != II_calloc) && (funI != II_xmalloc) && (funI != II_xcalloc)
-      && (funI != II_realloc) && (funI != II_reallocarray) && (funI != II_xrealloc)
-      && (funI != II_xreallocarray) && (funI != II_memcpy))
-      return;
+  if (iter == IIvec.end())
+    return;
 
-  if ((funI == II_malloc) || (funI == II_xmalloc))
-    handleAllocArg(CE->getArg(0), C);
-  else if ((funI == II_calloc) || (funI == II_xcalloc)) {
-    handleAllocArg(CE->getArg(0), C);
-    handleAllocArg(CE->getArg(1), C);
+  auto index = std::distance(IIvec.begin(), iter);
+
+  DEBUG_PRINT("Index is: " + std::to_string(index));
+
+  if ((index >= MALLOC_START) && (index <= MALLOC_END))
+    handleAllocArg(CE->getArg(0),C);
+  else if ((index >= CALLOC_START) && (index <= CALLOC_END)) {
+      handleAllocArg(CE->getArg(0), C);
+      handleAllocArg(CE->getArg(1), C);
   }
-  else if ((funI == II_realloc) || (funI == II_xrealloc))
+  else if ((index >= REALLOC_START) && (index <= REALLOC_END))
     handleAllocArg(CE->getArg(1), C);
-  else if ((funI == II_reallocarray) || (funI == II_xreallocarray)) {
+  else if ((index >= REALLOCARRAY_START) && (index <= REALLOCARRAY_END)) {
     handleAllocArg(CE->getArg(1), C);
     handleAllocArg(CE->getArg(2), C);
   }

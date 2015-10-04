@@ -23,6 +23,28 @@ private:
   void reportBug(clang::ento::CheckerContext &C, clang::SourceRange SR,
                  llvm::StringRef Message) const;
   void handleAllocArg(const clang::Expr *E, clang::ento::CheckerContext &C) const;
+  void reportUnsafeExpCasts(const clang::ExplicitCastExpr *ECE,
+                            clang::ento::CheckerContext &C) const;
+
+  const std::vector<std::string> callNames =
+      {"malloc", "xmalloc", "av_malloc", "av_mallocz", "srslte_vec_malloc",
+	"calloc", "xcalloc", "av_calloc",
+	"realloc", "xrealloc", "av_realloc",
+	"reallocarray", "xreallocarray",
+	"memcpy"
+      };
+  enum ALLOC_API : unsigned {
+    MALLOC_START = 0,
+    MALLOC_END = 4,
+    CALLOC_START = 5,
+    CALLOC_END = 7,
+    REALLOC_START = 8,
+    REALLOC_END = 10,
+    REALLOCARRAY_START = 11,
+    REALLOCARRAY_END = 12,
+    MEMCPY_START = 13,
+    MEMCPY_END = 13
+  };
 };
 } // end of Melange namespace
 
