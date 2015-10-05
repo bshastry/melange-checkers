@@ -2,9 +2,9 @@
 
 using namespace clang;
 using namespace ento;
-using namespace Melange;
+using Melange::TypeCastingVulnChecker;
 
-bool isUnsafeExpCast(const ExplicitCastExpr *ECE, std::string &Message) {
+bool isUnsafeExpCast(const ExplicitCastExpr *ECE, std::string &Message, std::string &declName) {
 
   const auto *ICE = dyn_cast<ImplicitCastExpr>(ECE->getSubExpr());
 
@@ -35,16 +35,20 @@ bool isUnsafeExpCast(const ExplicitCastExpr *ECE, std::string &Message) {
   if (castFromType == castToType)
     return false;
 
+  if (isa<NamedDecl>(VD))
+    declName = cast<NamedDecl>(VD)->getQualifiedNameAsString();
+
+  DEBUG_PRINT("declName: " + declName);
   DEBUG_PRINT("castfrom type: " + castFromType.getAsString());
   DEBUG_PRINT("castto type: " + castToType.getAsString());
 
-  Message = "Cast From " + castFromType.getAsString() + " to " +
-			castToType.getAsString() + " may be unsafe.";
+  Message = declName + " is explicitly cast from " + castFromType.getAsString() + " to " +
+			castToType.getAsString() + ". This may be unsafe.";
 
   return true;
 }
 
-bool isUnsafeImpCast(const ImplicitCastExpr *ICE, std::string &Message) {
+bool isUnsafeImpCast(const ImplicitCastExpr *ICE, std::string &Message, std::string &declName) {
   if (ICE->getCastKind() != CK_IntegralCast)
     return false;
 
@@ -71,11 +75,15 @@ bool isUnsafeImpCast(const ImplicitCastExpr *ICE, std::string &Message) {
   if (castFromType == castToType)
     return false;
 
+  if (isa<NamedDecl>(VD))
+    declName = cast<NamedDecl>(VD)->getQualifiedNameAsString();
+
+  DEBUG_PRINT("declName: " + declName);
   DEBUG_PRINT("castfrom type: " + castFromType.getAsString());
   DEBUG_PRINT("castto type: " + castToType.getAsString());
 
-  Message = "Implicit cast from " + castFromType.getAsString() + " to " +
-			castToType.getAsString() + " may be unsafe.";
+  Message = declName + " is implicitly cast from " + castFromType.getAsString() + " to " +
+			castToType.getAsString() + ". This may be unsafe.";
 
   return true;
 }
@@ -83,15 +91,17 @@ bool isUnsafeImpCast(const ImplicitCastExpr *ICE, std::string &Message) {
 void TypeCastingVulnChecker::reportUnsafeExpCasts(const ExplicitCastExpr *ECE,
                                                   CheckerContext &C) const {
   std::string Message = "";
-  if (isUnsafeExpCast(ECE, Message))
-    reportBug(C, ECE->getSourceRange(), Message);
+  std::string declName = "";
+  if (isUnsafeExpCast(ECE, Message, declName))
+    reportBug(C, ECE->getSourceRange(), Message, declName);
 }
 
 void TypeCastingVulnChecker::reportUnsafeImpCasts(const ImplicitCastExpr *ICE,
                                                   CheckerContext &C) const {
   std::string Message = "";
-  if (isUnsafeImpCast(ICE, Message))
-    reportBug(C, ICE->getSourceRange(), Message);
+  std::string declName = "";
+  if (isUnsafeImpCast(ICE, Message, declName))
+    reportBug(C, ICE->getSourceRange(), Message, declName);
 }
 
 void TypeCastingVulnChecker::handleAllocArg(const Expr *E, CheckerContext &C) const {
@@ -213,7 +223,7 @@ void TypeCastingVulnChecker::checkPreStmt(const ExplicitCastExpr *ECE, CheckerCo
 }
 
 void TypeCastingVulnChecker::reportBug(CheckerContext &C, SourceRange SR,
-                                       StringRef Message) const {
+                                       StringRef Message, StringRef declName) const {
   const char *name = "Type casting vulnerability checker";
   const char *desc = "Flags potential unsafe casts";
 
@@ -226,6 +236,11 @@ void TypeCastingVulnChecker::reportBug(CheckerContext &C, SourceRange SR,
 
   BugReport *R = new BugReport(*BT, Message, EN);
   R->addRange(SR);
+
+  Diag.encodeBugInfo(declName, C);
+  for (auto &i : Diag.getBugInfoDiag()) {
+      R->addExtraText(i);
+   }
 
   C.emitReport(R);
 }

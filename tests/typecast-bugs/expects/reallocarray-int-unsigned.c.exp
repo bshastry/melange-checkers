@@ -1,7 +1,7 @@
-reallocarray-int-unsigned.c:8:10: warning: Cast From int to unsigned int may be unsafe
+reallocarray-int-unsigned.c:8:10: warning: i is explicitly cast from int to unsigned int. This may be unsafe
    ptr = reallocarray(ptr, (unsigned)i, j);
          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-reallocarray-int-unsigned.c:17:10: warning: Cast From int to unsigned int may be unsafe
+reallocarray-int-unsigned.c:17:10: warning: i is explicitly cast from int to unsigned int. This may be unsafe
    ptr = reallocarray(ptr, j, (unsigned)i);
          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 2 warnings generated.

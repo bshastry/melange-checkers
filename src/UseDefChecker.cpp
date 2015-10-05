@@ -11,7 +11,7 @@
 
 using namespace clang;
 using namespace clang::ento;
-using namespace Melange;
+using Melange::UseDefChecker;
 
 REGISTER_SET_WITH_PROGRAMSTATE(TaintDeclsInContext, const Decl*)
 

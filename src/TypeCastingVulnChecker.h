@@ -4,6 +4,7 @@
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
+#include "Diagnostics.h"
 
 #ifdef _DEBUG
 #define DEBUG_PRINT(x) llvm::errs() << x << "\n"
@@ -13,15 +14,20 @@
 
 namespace Melange {
 
+  class Diagnostics;
+
 class TypeCastingVulnChecker : public clang::ento::Checker<clang::ento::check::PreStmt<clang::ExplicitCastExpr>,
 							   clang::ento::check::PreStmt<clang::CallExpr>> {
+
+  mutable Diagnostics Diag;
+
 public:
   void checkPreStmt(const clang::ExplicitCastExpr *ECE, clang::ento::CheckerContext &C) const;
   void checkPreStmt(const clang::CallExpr *CE, clang::ento::CheckerContext &C) const;
 private:
   mutable std::unique_ptr<clang::ento::BugType> BT;
   void reportBug(clang::ento::CheckerContext &C, clang::SourceRange SR,
-                 llvm::StringRef Message) const;
+                 llvm::StringRef Message, llvm::StringRef declName) const;
   void handleAllocArg(const clang::Expr *E, clang::ento::CheckerContext &C) const;
   void reportUnsafeExpCasts(const clang::ExplicitCastExpr *ECE,
                             clang::ento::CheckerContext &C) const;
