@@ -71,7 +71,12 @@ class TestBasic(SimpleTester):
     def test_reallocimplicit(self):
         self.assertEqual(testinput('realloc-implicit.c'), True,
                          'Test on realloc-implicit.c failed')
-
+    def test_memcpyimplicit(self):
+	self.assertEqual(testinput('memcpy-implicit.c'), True,
+			'Test on memcpy-implicit.c failed')
+    def test_memsetimplicit(self):
+	self.assertEqual(testinput('memset-implicit.c'), True,
+			'Test on memset-implicit.c failed')
 
 
 
