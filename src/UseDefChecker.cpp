@@ -214,6 +214,45 @@ void UseDefChecker::checkPreStmt(const BinaryOperator *BO,
   trackMembersInAssign(BO, C);
 }
 
+void UseDefChecker::checkPreCall(const CallEvent &Call,
+                                 CheckerContext &C) const {
+
+  if (isa<CXXConstructorDecl>(C.getTopLevelDecl()))
+    return;
+
+  const Decl *D = Call.getDecl();
+  const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D);
+
+  for (unsigned i = 0, e = Call.getNumArgs(); i != e; ++i) {
+
+      if (!isCXXFieldDecl(Call.getArgExpr(i)->IgnoreImpCasts()))
+       continue;
+
+      const ParmVarDecl *ParamDecl = nullptr;
+      const MemberExpr *CAE = dyn_cast<const MemberExpr>(Call.getArgExpr(i)->IgnoreImpCasts());
+
+      if (FD && i < FD->getNumParams())
+       ParamDecl = FD->getParamDecl(i);
+
+      // Skip args passed by ref/ptr
+      if (ParamDecl->getType()->isReferenceType() ||
+	  ParamDecl->getType()->isPointerType())
+	continue;
+
+      if (ParamDecl && CAE) {
+         const FieldDecl *FiD = dyn_cast<FieldDecl>(CAE->getMemberDecl());
+
+         if (FiD && isa<CXXRecordDecl>(FiD->getParent())) {
+             const NamedDecl *ND = dyn_cast<NamedDecl>(CAE->getMemberDecl());
+             if (ND && !isTaintedInContext(ND, C))
+                 encodeBugInfo(CAE, C);
+         }
+      }
+  }
+
+  return;
+}
+
 void UseDefChecker::encodeBugInfo(const MemberExpr *ME,
                                   CheckerContext &C) const {
   /* Get the FQ field name */

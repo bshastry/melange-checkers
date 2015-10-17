@@ -13,6 +13,7 @@ namespace Melange {
 class UseDefChecker : public clang::ento::Checker< clang::ento::check::EndFunction,
 				      clang::ento::check::BranchCondition,
 				      clang::ento::check::PreStmt<clang::BinaryOperator>,
+				      clang::ento::check::PreCall,
 				      clang::ento::check::EndOfTranslationUnit> {
 
   typedef llvm::DenseSet<const clang::CXXRecordDecl *>					CtorsVisitedTy;
@@ -36,6 +37,7 @@ public:
   void checkPreStmt(const clang::BinaryOperator *BO, clang::ento::CheckerContext &C) const;
   void checkEndFunction(clang::ento::CheckerContext &C) const;
   void checkBranchCondition(const clang::Stmt *Condition, clang::ento::CheckerContext &Ctx) const;
+  void checkPreCall(const clang::ento::CallEvent &Call, clang::ento::CheckerContext &C) const;
   void checkEndOfTranslationUnit(const clang::TranslationUnitDecl *TU, clang::ento::AnalysisManager &Mgr,
                                   clang::ento::BugReporter &BR) const;
 
