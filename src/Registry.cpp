@@ -1,6 +1,7 @@
 #include "clang/StaticAnalyzer/Core/CheckerRegistry.h"
 #include "UseDefChecker.h"
 #include "TypeCastingVulnChecker.h"
+#include "StrCpyOverflowChecker.h"
 
 using namespace clang;
 using namespace ento;
@@ -10,6 +11,7 @@ extern "C"
 void clang_registerCheckers(CheckerRegistry &registry) {
   registry.addChecker<Melange::UseDefChecker>("alpha.security.UseDefChecker", "CXX UseDef Checker");
   registry.addChecker<Melange::TypeCastingVulnChecker>("alpha.security.CastChecker", "Unsafe cast checker");
+  registry.addChecker<Melange::StrCpyOverflowChecker>("alpha.security.StrOverflowChecker", "Str Overflow Checker");
 }
 
 extern "C"

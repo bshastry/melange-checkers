@@ -1,0 +1,4 @@
+strcpy-stack-overflow.c:3:4: warning: Destination of str* call is a fixed size buffer that can potentially overflow
+   strcpy(dst, src);
+   ^~~~~~~~~~~~~~~~
+1 warning generated.
