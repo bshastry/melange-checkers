@@ -7,6 +7,17 @@ using Melange::TypeConfusionChecker;
 
 REGISTER_MAP_WITH_PROGRAMSTATE(TypeMap, const ValueDecl*, QualType)
 
+const QualType *isVoidPtr(CheckerContext &C, const Expr* E) {
+  if (!isa<DeclRefExpr>(E))
+    return nullptr;
+
+  const auto *VD = cast<DeclRefExpr>(E)->getDecl();
+
+  ProgramStateRef State = C.getState();
+  const QualType *T = State->get<TypeMap>(VD);
+  return T;
+}
+
 void TypeConfusionChecker::checkPreStmt(const clang::CastExpr *CE,
                                         clang::ento::CheckerContext &C) const {
   if (isa<ImplicitCastExpr>(CE))
@@ -85,15 +96,28 @@ void TypeConfusionChecker::checkPreStmt(const clang::BinaryOperator *BO,
   if (!isa<ImplicitCastExpr>(RHS))
     return;
 
-  if (cast<CastExpr>(RHS)->getCastKind() != CK_BitCast)
+  ProgramStateRef State = C.getState();
+
+  if (cast<CastExpr>(RHS)->getCastKind() != CK_BitCast) {
+    const QualType *RT = isVoidPtr(C, RHS->IgnoreImpCasts());
+    if (!RT)
+      return;
+
+    DEBUG_PRINT("RHS is void ptr that has been cast to " + RT->getAsString());
+
+    State = State->set<TypeMap>(LDecl, *(const_cast<QualType *>(RT)));
+    if(State != C.getState()) {
+      DEBUG_PRINT("Value is " + State->get<TypeMap>(LDecl)->getAsString());
+      C.addTransition(State);
+    }
     return;
+  }
 
   DEBUG_PRINT("RHS is being bitcast");
 
-  ProgramStateRef State = C.getState();
   State = State->set<TypeMap>(LDecl, RHS->IgnoreImpCasts()->getType());
   if(State != C.getState()) {
-    DEBUG_PRINT("Added key value pair");
+    DEBUG_PRINT("Value is " + State->get<TypeMap>(LDecl)->getAsString());
     C.addTransition(State);
   }
 }

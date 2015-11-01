@@ -50,11 +50,12 @@ class SimpleTester(unittest.TestCase):
 
 
 class TestBasic(SimpleTester):
-    def test_malloc(self):
+    def test_charint(self):
         self.assertEqual(testinput('char-to-int.c'), True,
                          'Test on char-to-int.c failed')
-
-
+    def test_charvoidint(self):
+        self.assertEqual(testinput('char-void-int.c'), True,
+                         'Test on char-void-int.c failed')
 
 if __name__ == '__main__':
     unittest.main()
