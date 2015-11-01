@@ -1,0 +1,4 @@
+char-to-int.c:6:9: warning: data is unsafely cast from char * to int *
+   b = *(int *)(data);
+        ^~~~~~~~~~~~~
+1 warning generated.

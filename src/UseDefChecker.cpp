@@ -455,13 +455,13 @@ void UseDefChecker::checkUnaryOp(const UnaryOperator *UO,
     case UO_PreDec:
     case UO_Minus:	// Additive inverse
     case UO_Not:
+    case UO_Deref:
     case UO_LNot: {
       checkUseIfMemberExpr(UO->getSubExpr(), C);
       break;
     }
     case UO_Plus:
     case UO_AddrOf:
-    case UO_Deref:
     case UO_Real:
     case UO_Imag:
     case UO_Extension:

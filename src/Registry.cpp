@@ -2,6 +2,7 @@
 #include "UseDefChecker.h"
 #include "TypeCastingVulnChecker.h"
 #include "StrCpyOverflowChecker.h"
+#include "TypeConfusionChecker.h"
 
 using namespace clang;
 using namespace ento;
@@ -12,6 +13,7 @@ void clang_registerCheckers(CheckerRegistry &registry) {
   registry.addChecker<Melange::UseDefChecker>("alpha.security.UseDefChecker", "CXX UseDef Checker");
   registry.addChecker<Melange::TypeCastingVulnChecker>("alpha.security.CastChecker", "Unsafe cast checker");
   registry.addChecker<Melange::StrCpyOverflowChecker>("alpha.security.StrOverflowChecker", "Str Overflow Checker");
+  registry.addChecker<Melange::TypeConfusionChecker>("alpha.security.TypeConfusionChecker", "Type confusion Checker");
 }
 
 extern "C"

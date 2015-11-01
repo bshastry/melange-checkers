@@ -30,6 +30,7 @@ add_library( usedef-checker SHARED
 		UseDefChecker.cpp
 		UseAfterFreeChecker.cpp
 		TypeCastingVulnChecker.cpp
+		TypeConfusionChecker.cpp
 		StrCpyOverflowChecker.cpp
 		Diagnostics.cpp
 		Registry.cpp
