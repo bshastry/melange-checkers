@@ -56,6 +56,13 @@ class TestBasic(SimpleTester):
     def test_charvoidint(self):
         self.assertEqual(testinput('char-void-int.c'), True,
                          'Test on char-void-int.c failed')
+    def test_charintds(self):
+        self.assertEqual(testinput('char-to-int-declstmt.c'), True,
+                         'Test on char-to-int-declstmt.c failed')
+    def test_charvoidintds(self):
+        self.assertEqual(testinput('char-void-int-declstmt.c'), True,
+                         'Test on char-void-int-declstmt.c failed')
+
 
 if __name__ == '__main__':
     unittest.main()

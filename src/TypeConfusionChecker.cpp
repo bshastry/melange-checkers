@@ -18,12 +18,100 @@ const QualType *isVoidPtr(CheckerContext &C, const Expr* E) {
   return T;
 }
 
+void handleInternal(const Decl *D, const Expr *E, CheckerContext &C) {
+  ProgramStateRef State = C.getState();
+  const ValueDecl *VD = cast<ValueDecl>(D);
+
+  if (cast<CastExpr>(E)->getCastKind() != CK_BitCast) {
+    const QualType *RT = isVoidPtr(C, E->IgnoreImpCasts());
+    if (!RT)
+      return;
+
+    DEBUG_PRINT("RHS is void ptr that has been cast to " + RT->getAsString());
+
+    State = State->set<TypeMap>(VD, *(const_cast<QualType *>(RT)));
+    if(State != C.getState()) {
+      DEBUG_PRINT("Value is " + State->get<TypeMap>(VD)->getAsString());
+      C.addTransition(State);
+    }
+    return;
+  }
+
+  DEBUG_PRINT("RHS is being bitcast");
+
+  State = State->set<TypeMap>(VD, E->IgnoreImpCasts()->getType());
+  if(State != C.getState()) {
+    DEBUG_PRINT("Value is " + State->get<TypeMap>(VD)->getAsString());
+    C.addTransition(State);
+  }
+}
+
+void handleBO(const BinaryOperator *BO, CheckerContext &C) {
+  const auto *LHS = BO->getLHS()->IgnoreParenImpCasts();
+
+  if (!isa<DeclRefExpr>(LHS))
+    return;
+
+  DEBUG_PRINT("DeclRefExpr");
+
+  const auto *LDecl = cast<DeclRefExpr>(LHS)->getDecl();
+
+  if (!(LDecl->getType().getTypePtr()->isVoidPointerType()))
+    return;
+
+  DEBUG_PRINT("LHS is void ptr");
+
+  const auto *RHS = BO->getRHS()->IgnoreParens();
+
+  if (!isa<ImplicitCastExpr>(RHS))
+    return;
+
+  handleInternal(cast<Decl>(LDecl), RHS, C);
+}
+
+void handleDeclStmt(const DeclStmt *DS, CheckerContext &C) {
+  const Decl *D = DS->getSingleDecl();
+
+  if (!isa<VarDecl>(D))
+    return;
+
+  const VarDecl *VD = cast<VarDecl>(D);
+  DEBUG_PRINT("Var Decl");
+
+  if (!(cast<ValueDecl>(VD)->getType().getTypePtr()->isVoidPointerType()))
+    return;
+
+  DEBUG_PRINT("Var Decl is void ptr");
+
+  if (!VD->hasInit())
+    return;
+
+  const Expr *E = VD->getInit()->IgnoreParens();
+
+  if (!isa<ImplicitCastExpr>(E))
+    return;
+
+  handleInternal(D, E, C);
+}
+
+void handleAssignment(const Stmt *S, CheckerContext &C) {
+
+  assert((isa<BinaryOperator>(S) || isa<DeclStmt>(S)) &&
+         "Expression neither BO nor DeclStmt");
+
+  if (isa<BinaryOperator>(S))
+    handleBO(cast<BinaryOperator>(S), C);
+  else if (isa<DeclStmt>(S))
+    handleDeclStmt(cast<DeclStmt>(S), C);
+}
+
 void TypeConfusionChecker::checkPreStmt(const clang::CastExpr *CE,
                                         clang::ento::CheckerContext &C) const {
   if (isa<ImplicitCastExpr>(CE))
     return;
 
   DEBUG_PRINT("Explicit cast expression");
+//  CE->dump();
 
   const auto *E = CE->getSubExpr()->IgnoreParenImpCasts();
   if (!isa<DeclRefExpr>(E))
@@ -77,49 +165,16 @@ void TypeConfusionChecker::checkPreStmt(const clang::BinaryOperator *BO,
 
   DEBUG_PRINT("Assignment");
 
-  const auto *LHS = BO->getLHS()->IgnoreParenImpCasts();
+  handleAssignment(cast<Stmt>(BO), C);
+}
 
-  if (!isa<DeclRefExpr>(LHS))
+void TypeConfusionChecker::checkPreStmt(const DeclStmt *DS, CheckerContext &C) const {
+  if (!DS->isSingleDecl())
     return;
 
-  DEBUG_PRINT("DeclRefExpr");
+  DEBUG_PRINT("Single DeclStmt");
 
-  const auto *LDecl = cast<DeclRefExpr>(LHS)->getDecl();
-
-  if (!(LDecl->getType().getTypePtr()->isVoidPointerType()))
-    return;
-
-  DEBUG_PRINT("LHS is void ptr");
-
-  const auto *RHS = BO->getRHS()->IgnoreParens();
-
-  if (!isa<ImplicitCastExpr>(RHS))
-    return;
-
-  ProgramStateRef State = C.getState();
-
-  if (cast<CastExpr>(RHS)->getCastKind() != CK_BitCast) {
-    const QualType *RT = isVoidPtr(C, RHS->IgnoreImpCasts());
-    if (!RT)
-      return;
-
-    DEBUG_PRINT("RHS is void ptr that has been cast to " + RT->getAsString());
-
-    State = State->set<TypeMap>(LDecl, *(const_cast<QualType *>(RT)));
-    if(State != C.getState()) {
-      DEBUG_PRINT("Value is " + State->get<TypeMap>(LDecl)->getAsString());
-      C.addTransition(State);
-    }
-    return;
-  }
-
-  DEBUG_PRINT("RHS is being bitcast");
-
-  State = State->set<TypeMap>(LDecl, RHS->IgnoreImpCasts()->getType());
-  if(State != C.getState()) {
-    DEBUG_PRINT("Value is " + State->get<TypeMap>(LDecl)->getAsString());
-    C.addTransition(State);
-  }
+  handleAssignment(cast<Stmt>(DS), C);
 }
 
 void TypeConfusionChecker::reportBug(CheckerContext &C, SourceRange SR,

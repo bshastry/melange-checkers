@@ -18,7 +18,8 @@ namespace Melange {
 
 class TypeConfusionChecker : public clang::ento::Checker<clang::ento::check::PreStmt<clang::CastExpr>,
 							 clang::ento::check::PreStmt<clang::CallExpr>,
-							 clang::ento::check::PreStmt<clang::BinaryOperator>> {
+							 clang::ento::check::PreStmt<clang::BinaryOperator>,
+							 clang::ento::check::PreStmt<clang::DeclStmt>> {
 
   mutable Diagnostics Diag;
 
@@ -26,6 +27,7 @@ public:
   void checkPreStmt(const clang::CastExpr *CE, clang::ento::CheckerContext &C) const;
   void checkPreStmt(const clang::CallExpr *CaE, clang::ento::CheckerContext &C) const;
   void checkPreStmt(const clang::BinaryOperator *BO, clang::ento::CheckerContext &C) const;
+  void checkPreStmt(const clang::DeclStmt *DS, clang::ento::CheckerContext &C) const;
   void reportBug(clang::ento::CheckerContext &C, clang::SourceRange SR,
                  llvm::StringRef Message, llvm::StringRef declName) const;
 

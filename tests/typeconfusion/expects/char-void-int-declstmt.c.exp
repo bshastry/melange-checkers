@@ -1,0 +1,4 @@
+char-void-int-declstmt.c:6:9: warning: data2 is unsafely cast from char * to int *
+   b = *(int *)(data2);
+        ^~~~~~~~~~~~~~
+1 warning generated.
