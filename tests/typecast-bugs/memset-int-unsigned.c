@@ -8,5 +8,5 @@ void f() {
 
 void g(int size) {
    char src[10];
-   memset(src, 0, size);
+   memset(src, 0, (unsigned)size);
 }

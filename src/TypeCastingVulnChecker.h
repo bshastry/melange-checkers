@@ -29,7 +29,7 @@ private:
   void reportBug(clang::ento::CheckerContext &C, clang::SourceRange SR,
                  llvm::StringRef Message, llvm::StringRef declName) const;
   void handleAllocArg(const clang::Expr *E, clang::ento::CheckerContext &C) const;
-  void reportUnsafeExpCasts(const clang::ExplicitCastExpr *ECE,
+  void reportUnsafeExpCasts(const clang::Expr *ECE,
                             clang::ento::CheckerContext &C) const;
   void reportUnsafeImpCasts(const clang::ImplicitCastExpr *ICE,
                             clang::ento::CheckerContext &C) const;

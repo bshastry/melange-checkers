@@ -4,7 +4,50 @@ using namespace clang;
 using namespace ento;
 using Melange::TypeCastingVulnChecker;
 
-bool isUnsafeExpCast(const ExplicitCastExpr *ECE, std::string &Message, std::string &declName) {
+//bool canConstantFold(const DeclRefExpr *DRE, CheckerContext &C) {
+//  ASTContext &ASTC = C.getASTContext();
+//
+//  // Don't know <=> (number <= 0)
+//  if (!DRE->isEvaluatable(ASTC))
+//    return false;
+//
+//  DEBUG_PRINT("Can be constant folded");
+//
+//  llvm::APSInt result;
+//  DRE->EvaluateAsInt(result, ASTC);
+//
+//  if (cast<llvm::APInt>(result).isStrictlyPositive())
+//    return true;
+//
+//  return false;
+//}
+
+bool isStrictlyPositive(const Expr *E, CheckerContext &C) {
+  ProgramStateRef State = C.getState();
+  SVal symVal = State->getSVal(E, C.getLocationContext());
+  if (symVal.isConstant() &&
+      ((symVal.getBaseKind() == SVal::NonLocKind) &&
+	(symVal.getSubKind() == nonloc::ConcreteIntKind))) {
+
+    const nonloc::ConcreteInt& C = symVal.castAs<nonloc::ConcreteInt>();
+    const llvm::APInt &value = C.getValue();
+
+    if (value.isStrictlyPositive())
+      return true;
+
+    return false;
+  }
+
+  // Symval is not a concrete int => may not be strictly positive
+  return false;
+}
+
+bool isUnsafeExpCast(CheckerContext &C, const Expr *E,
+                     std::string &Message, std::string &declName) {
+
+  assert(isa<ExplicitCastExpr>(E->IgnoreParenImpCasts()) && "Expr is not explicit cast");
+
+  const ExplicitCastExpr *ECE = cast<ExplicitCastExpr>(E->IgnoreParenImpCasts());
 
   const auto *ICE = dyn_cast<ImplicitCastExpr>(ECE->getSubExpr());
 
@@ -24,9 +67,12 @@ bool isUnsafeExpCast(const ExplicitCastExpr *ECE, std::string &Message, std::str
   const auto *castDRE = dyn_cast<DeclRefExpr>(ECE->getSubExpr()->IgnoreParenImpCasts());
 
   if (!castDRE)
-      return false;
+    return false;
 
-  DEBUG_PRINT("castee is declrefexpr");
+  if (isStrictlyPositive(E, C))
+    return false;
+
+  DEBUG_PRINT("castee is declrefexpr and may evaluate to neg int");
   // declrefexpr
   const auto *VD = castDRE->getDecl();
   auto castFromType = VD->getType();
@@ -48,7 +94,8 @@ bool isUnsafeExpCast(const ExplicitCastExpr *ECE, std::string &Message, std::str
   return true;
 }
 
-bool isUnsafeImpCast(const ImplicitCastExpr *ICE, std::string &Message, std::string &declName) {
+bool isUnsafeImpCast(CheckerContext &C, const ImplicitCastExpr *ICE,
+                     std::string &Message, std::string &declName) {
   if (ICE->getCastKind() != CK_IntegralCast)
     return false;
 
@@ -64,9 +111,12 @@ bool isUnsafeImpCast(const ImplicitCastExpr *ICE, std::string &Message, std::str
   const auto *castDRE = dyn_cast<DeclRefExpr>(ICE->IgnoreParenImpCasts());
 
   if (!castDRE)
-      return false;
+    return false;
 
-  DEBUG_PRINT("castee is declrefexpr");
+  if (isStrictlyPositive(ICE, C))
+    return false;
+
+  DEBUG_PRINT("castee is declrefexpr and may evaluate to neg int");
   // declrefexpr
   const auto *VD = castDRE->getDecl();
   auto castFromType = VD->getType();
@@ -88,11 +138,11 @@ bool isUnsafeImpCast(const ImplicitCastExpr *ICE, std::string &Message, std::str
   return true;
 }
 
-void TypeCastingVulnChecker::reportUnsafeExpCasts(const ExplicitCastExpr *ECE,
+void TypeCastingVulnChecker::reportUnsafeExpCasts(const Expr *ECE,
                                                   CheckerContext &C) const {
   std::string Message = "";
   std::string declName = "";
-  if (isUnsafeExpCast(ECE, Message, declName))
+  if (isUnsafeExpCast(C, ECE, Message, declName))
     reportBug(C, ECE->getSourceRange(), Message, declName);
 }
 
@@ -100,7 +150,7 @@ void TypeCastingVulnChecker::reportUnsafeImpCasts(const ImplicitCastExpr *ICE,
                                                   CheckerContext &C) const {
   std::string Message = "";
   std::string declName = "";
-  if (isUnsafeImpCast(ICE, Message, declName))
+  if (isUnsafeImpCast(C, ICE, Message, declName))
     reportBug(C, ICE->getSourceRange(), Message, declName);
 }
 
@@ -110,7 +160,7 @@ void TypeCastingVulnChecker::handleAllocArg(const Expr *E, CheckerContext &C) co
   const auto *ICE = dyn_cast<ImplicitCastExpr>(E);
 
   if (ECE)
-    reportUnsafeExpCasts(ECE, C);
+    reportUnsafeExpCasts(E, C);
   else if (ICE)
     reportUnsafeImpCasts(ICE, C);
 }

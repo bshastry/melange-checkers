@@ -1,4 +1,4 @@
-memset-implicit.c:6:4: warning: size is implicitly cast from int to unsigned long. This may be unsafe
+memset-implicit.c:11:4: warning: size is implicitly cast from int to unsigned long. This may be unsafe
    memset(src, 0, size);
    ^~~~~~~~~~~~~~~~~~~~
 1 warning generated.

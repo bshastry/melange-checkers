@@ -1,4 +1,4 @@
-memcpy-implicit.c:7:4: warning: size is implicitly cast from int to unsigned long. This may be unsafe
+memcpy-implicit.c:13:4: warning: size is implicitly cast from int to unsigned long. This may be unsafe
    memcpy(src, dest, size);
    ^~~~~~~~~~~~~~~~~~~~~~~
 1 warning generated.

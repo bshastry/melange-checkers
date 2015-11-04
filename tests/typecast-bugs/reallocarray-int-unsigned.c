@@ -9,10 +9,8 @@ void f() {
    free(ptr);
 }
 
-void g() {
-   int i;
-   unsigned long j;
-   i = j = 10;
+void g(int i) {
+   unsigned long j = 10;
    void *ptr = malloc(j);
    ptr = reallocarray(ptr, j, (unsigned)i);
    free(ptr);

@@ -8,10 +8,8 @@ void f() {
    free(ptr);
 }
 
-void g() {
-   int i;
-   unsigned long j;
-   i = j = 10;
+void g(int i) {
+   unsigned long j = 10;
    void *ptr = calloc(j, (unsigned)i);
    free(ptr);
 }

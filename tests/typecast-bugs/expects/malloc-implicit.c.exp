@@ -1,4 +1,4 @@
-malloc-implicit.c:5:16: warning: size is implicitly cast from int to unsigned long. This may be unsafe
+malloc-implicit.c:10:16: warning: size is implicitly cast from int to unsigned long. This may be unsafe
    void *ptr = malloc(size);
                ^~~~~~~~~~~~
 1 warning generated.

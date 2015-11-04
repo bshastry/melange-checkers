@@ -11,7 +11,6 @@ void f() {
 void g() {
    int i;
    unsigned long j;
-   i = j = 10;
    void *ptr = calloc(j, i);
    free(ptr);
 }

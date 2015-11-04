@@ -5,3 +5,8 @@ void f() {
    void *ptr = malloc(size);
    free(ptr);
 }
+
+void g(int size) {
+   void *ptr = malloc(size);
+   free(ptr);
+}  

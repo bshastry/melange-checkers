@@ -1,0 +1,4 @@
+memset-int-unsigned.c:11:4: warning: size is explicitly cast from int to unsigned int. This may be unsafe
+   memset(src, 0, (unsigned)size);
+   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.
