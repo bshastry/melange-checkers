@@ -1,0 +1,4 @@
+strncpy-int-unsigned.c:13:4: warning: size is explicitly cast from int to unsigned int. This may be unsafe
+   strncpy(src, dest, (unsigned)size);
+   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.

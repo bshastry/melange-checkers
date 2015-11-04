@@ -1,0 +1,4 @@
+strncpy-implicit.c:13:4: warning: size is implicitly cast from int to unsigned long. This may be unsafe
+   strncpy(src, dest, size);
+   ^~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.

@@ -1,0 +1,4 @@
+memcpy-int-unsigned.c:13:4: warning: size is explicitly cast from int to unsigned int. This may be unsafe
+   memcpy(src, dest, (unsigned)size);
+   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.

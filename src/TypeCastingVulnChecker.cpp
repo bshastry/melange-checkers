@@ -197,7 +197,7 @@ void TypeCastingVulnChecker::checkPreStmt(const CallExpr *CE, CheckerContext &C)
     handleAllocArg(CE->getArg(1), C);
     handleAllocArg(CE->getArg(2), C);
   }
-  else
+  else if ((index >= MEMCPY_START) && (index <= STRCPY_END))
     handleAllocArg(CE->getArg(2), C);
 }
 

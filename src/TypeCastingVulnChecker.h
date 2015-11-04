@@ -39,19 +39,22 @@ private:
 	"calloc", "xcalloc", "av_calloc",
 	"realloc", "xrealloc", "av_realloc",
 	"reallocarray", "xreallocarray",
-	"memcpy", "memset"
+	"memcpy", "memset", "memmove",
+	"strncpy"
       };
   enum ALLOC_API : unsigned {
     MALLOC_START = 0,
-    MALLOC_END = 4,
+    MALLOC_END = MALLOC_START + 4,
     CALLOC_START = 5,
-    CALLOC_END = 7,
+    CALLOC_END = CALLOC_START + 2,
     REALLOC_START = 8,
-    REALLOC_END = 10,
+    REALLOC_END = REALLOC_START + 2,
     REALLOCARRAY_START = 11,
-    REALLOCARRAY_END = 12,
+    REALLOCARRAY_END = REALLOCARRAY_START + 1,
     MEMCPY_START = 13,
-    MEMCPY_END = 14
+    MEMCPY_END = MEMCPY_START + 2,
+    STRCPY_START = 16,
+    STRCPY_END = STRCPY_START
   };
 };
 } // end of Melange namespace
