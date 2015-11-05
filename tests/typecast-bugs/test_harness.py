@@ -30,7 +30,7 @@ def diffExp(filename, out):
 
 
 def invokecj(filename):
-    args = "clang --analyze -Xclang -load -Xclang /home/bhargava/work/gitlab/checkers/build-live/libusedef-checker.so -Xclang -analyzer-checker=alpha.security.CastChecker %s" % filename
+    args = "clang --analyze -Xclang -load -Xclang /home/bhargava/work/gitlab/checkers/build-live/libusedef-checker.so -Xclang -analyzer-checker=alpha.security.CastChecker -Xanalyzer -analyzer-disable-checker=core,unix,deadcode,cplusplus,security %s" % filename
     retpair = execwrapper(args, "Test on %s" % filename + " failed")
     if retpair.ret:
         return diffExp(filename, retpair.out)

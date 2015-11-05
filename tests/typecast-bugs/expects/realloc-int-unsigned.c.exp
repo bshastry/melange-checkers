@@ -1,4 +1,7 @@
 realloc-int-unsigned.c:15:10: warning: i is explicitly cast from int to unsigned int. This may be unsafe
    ptr = realloc(ptr, (unsigned)i);
          ^~~~~~~~~~~~~~~~~~~~~~~~~
-1 warning generated.
+realloc-int-unsigned.c:23:12: warning: i is explicitly cast from int to unsigned int. This may be unsafe
+     ptr = realloc(ptr, (unsigned)i);
+           ^~~~~~~~~~~~~~~~~~~~~~~~~
+2 warnings generated.

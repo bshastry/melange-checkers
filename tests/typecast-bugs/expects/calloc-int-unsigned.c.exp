@@ -1,4 +1,7 @@
 calloc-int-unsigned.c:13:16: warning: i is explicitly cast from int to unsigned int. This may be unsafe
    void *ptr = calloc(j, (unsigned)i);
                ^~~~~~~~~~~~~~~~~~~~~~
-1 warning generated.
+calloc-int-unsigned.c:21:21: warning: i is explicitly cast from int to unsigned int. This may be unsafe
+        void *ptr = calloc(j, (unsigned)i);
+                    ^~~~~~~~~~~~~~~~~~~~~~
+2 warnings generated.

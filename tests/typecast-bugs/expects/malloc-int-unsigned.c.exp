@@ -1,4 +1,7 @@
 malloc-int-unsigned.c:10:16: warning: size is explicitly cast from int to unsigned int. This may be unsafe
    void *ptr = malloc((unsigned)size);
                ^~~~~~~~~~~~~~~~~~~~~~
-1 warning generated.
+malloc-int-unsigned.c:16:21: warning: size is explicitly cast from int to unsigned int. This may be unsafe
+        void *ptr = malloc((unsigned)size);
+                    ^~~~~~~~~~~~~~~~~~~~~~
+2 warnings generated.

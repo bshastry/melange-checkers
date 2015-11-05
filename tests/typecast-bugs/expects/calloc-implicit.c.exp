@@ -1,4 +1,7 @@
 calloc-implicit.c:14:16: warning: i is implicitly cast from int to unsigned long. This may be unsafe
    void *ptr = calloc(j, i);
                ^~~~~~~~~~~~
-1 warning generated.
+calloc-implicit.c:22:21: warning: i is implicitly cast from int to unsigned long. This may be unsafe
+        void *ptr = calloc(j, i);
+                    ^~~~~~~~~~~~
+2 warnings generated.

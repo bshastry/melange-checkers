@@ -1,12 +1,24 @@
 #include <string.h>
 
-void f() {
+void f1() {
    int size = 10;
    char src[10];
-   memset(src, 0, size);
+   memset(src, 0, (unsigned)size);
 }
 
-void g(int size) {
+void f2(int size) {
    char src[10];
    memset(src, 0, (unsigned)size);
+}
+
+void f3(int size) {
+   char src[10];
+   if (size < 0)
+     memset(src, 0, (unsigned)size);
+}
+
+void f4(int size) {
+   char src[10];
+   if (size > 0)
+     memset(src, 0, (unsigned)size);
 }

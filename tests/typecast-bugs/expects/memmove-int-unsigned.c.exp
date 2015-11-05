@@ -1,4 +1,7 @@
 memmove-int-unsigned.c:13:4: warning: size is explicitly cast from int to unsigned int. This may be unsafe
-   memcpy(src, dest, (unsigned)size);
-   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-1 warning generated.
+   memmove(dest, src, (unsigned)size);
+   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+memmove-int-unsigned.c:20:6: warning: size is explicitly cast from int to unsigned int. This may be unsafe
+     memmove(dest, src, (unsigned)size);
+     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2 warnings generated.

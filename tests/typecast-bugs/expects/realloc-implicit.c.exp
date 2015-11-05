@@ -1,4 +1,7 @@
 realloc-implicit.c:15:10: warning: i is implicitly cast from int to unsigned long. This may be unsafe
    ptr = realloc(ptr, i);
          ^~~~~~~~~~~~~~~
-1 warning generated.
+realloc-implicit.c:23:12: warning: i is implicitly cast from int to unsigned long. This may be unsafe
+     ptr = realloc(ptr, i);
+           ^~~~~~~~~~~~~~~
+2 warnings generated.

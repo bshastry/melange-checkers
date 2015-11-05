@@ -1,4 +1,7 @@
 memmove-implicit.c:13:4: warning: size is implicitly cast from int to unsigned long. This may be unsafe
-   memmove(src, dest, size);
+   memmove(dest, src, size);
    ^~~~~~~~~~~~~~~~~~~~~~~~
-1 warning generated.
+memmove-implicit.c:20:6: warning: size is implicitly cast from int to unsigned long. This may be unsafe
+     memmove(dest, src, size);
+     ^~~~~~~~~~~~~~~~~~~~~~~~
+2 warnings generated.
