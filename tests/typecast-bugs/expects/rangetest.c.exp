@@ -1,0 +1,13 @@
+rangetest.c:13:16: warning: i is implicitly cast from int to unsigned long. This may be unsafe
+   void *ptr = calloc(j, i);
+               ^~~~~~~~~~~~
+rangetest.c:22:14: warning: i is implicitly cast from int to unsigned long. This may be unsafe
+        void *ptr = calloc(j, i);
+                    ^~~~~~~~~~~~
+rangetest.c:31:14: warning: i is implicitly cast from int to unsigned long. This may be unsafe
+        void *ptr = calloc(j, i);
+                    ^~~~~~~~~~~~
+rangetest.c:49:16: warning: i is implicitly cast from int to unsigned long. This may be unsafe
+   void *ptr = calloc(j, i);
+               ^~~~~~~~~~~~
+4 warnings generated.

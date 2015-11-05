@@ -95,6 +95,10 @@ class TestBasic(SimpleTester):
     def test_strncpyimplicit(self):
         self.assertEqual(testinput('strncpy-implicit.c'), True,
                          'Test on strncpy-implicit.c failed')
+    def test_range(self):
+        self.assertEqual(testinput('rangetest.c'), True,
+                         'Test on rangetest.c failed')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -29,25 +29,56 @@ bool isAssumedStrictlyPositive(Optional<NonLoc> symVal, CheckerContext &C) {
 
   ProgramStateRef State = C.getState();
   SValBuilder &SB = C.getSValBuilder();
+
+  llvm::APInt IntMax(32, 2147483647);
+  NonLoc IntMaxVal = SB.makeIntVal(IntMax, false);
   llvm::APInt Zero(32, 0);
   NonLoc ZeroVal = SB.makeIntVal(Zero, false);
 
-  SVal cond = SB.evalBinOpNN(State, BO_GT, *symVal, ZeroVal,
+  SVal condUpper = SB.evalBinOpNN(State, BO_LT, *symVal, IntMaxVal,
                                SB.getConditionType());
 
-  Optional<NonLoc> NLCond = cond.getAs<NonLoc>();
+  Optional<NonLoc> NLCondUpper = condUpper.getAs<NonLoc>();
 
-  if(!NLCond)
+  if(!NLCondUpper)
     return false;
 
-  ProgramStateRef stateT, stateF;
-  std::tie(stateT, stateF) = State->assume(*NLCond);
+  ProgramStateRef stateUT, stateUF;
+  std::tie(stateUT, stateUF) = State->assume(*NLCondUpper);
 
-  if (stateT && !stateF)
+  SVal condLower = SB.evalBinOpNN(State, BO_GT, *symVal, ZeroVal,
+                                SB.getConditionType());
+
+  Optional<NonLoc> NLCondLower = condLower.getAs<NonLoc>();
+
+  if(!NLCondLower)
+    return false;
+
+  ProgramStateRef stateLT, stateLF;
+  std::tie(stateLT, stateLF) = State->assume(*NLCondLower);
+
+  // (0, INT_MAX)
+  if ((stateUT && stateLT) && (!stateUF && !stateLF)) {
+    DEBUG_PRINT("0 < size < INT_MAX");
     return true;
-  else if (!stateT && stateF)
+  }
+  // (INT_MAX, UINT64_MAX)
+  if (!stateUT && stateUF) {
+    DEBUG_PRINT("size > INT_MAX");
     return false;
-
+  }
+  // (0,
+  if (stateLT && !stateLF) {
+    DEBUG_PRINT("size > 0");
+    return true;
+  }
+  // , 0)
+  if (!stateLT && stateLF) {
+    DEBUG_PRINT("size < 0");
+    return false;
+  }
+  // , INT_MAX)
+  DEBUG_PRINT("size is unconstrained");
   return false;
 }
 
