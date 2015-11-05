@@ -4,27 +4,7 @@ using namespace clang;
 using namespace ento;
 using Melange::TypeCastingVulnChecker;
 
-//bool canConstantFold(const DeclRefExpr *DRE, CheckerContext &C) {
-//  ASTContext &ASTC = C.getASTContext();
-//
-//  // Don't know <=> (number <= 0)
-//  if (!DRE->isEvaluatable(ASTC))
-//    return false;
-//
-//  DEBUG_PRINT("Can be constant folded");
-//
-//  llvm::APSInt result;
-//  DRE->EvaluateAsInt(result, ASTC);
-//
-//  if (cast<llvm::APInt>(result).isStrictlyPositive())
-//    return true;
-//
-//  return false;
-//}
-
-bool isStrictlyPositive(const Expr *E, CheckerContext &C) {
-  ProgramStateRef State = C.getState();
-  SVal symVal = State->getSVal(E, C.getLocationContext());
+bool isStrictlyPositive(SVal symVal) {
   if (symVal.isConstant() &&
       ((symVal.getBaseKind() == SVal::NonLocKind) &&
 	(symVal.getSubKind() == nonloc::ConcreteIntKind))) {
@@ -42,37 +22,36 @@ bool isStrictlyPositive(const Expr *E, CheckerContext &C) {
   return false;
 }
 
-//bool isAssumedStrictlyPositive(const Expr *E, CheckerContext &C) {
-//
-//  ProgramStateRef State = C.getState();
-//  SVal symVal = State->getSVal(E, C.getLocationContext());
-//  SValBuilder &svalBuilder = C.getSValBuilder();
-//  QualType cmpTy = svalBuilder.getConditionType();
-//
-//  ProgramStateRef stateT, stateF;
-//  Optional<NonLoc>  symValNL = symVal.getAs<NonLoc>();
-//  Optional<NonLoc> zero = svalBuilder.makeZeroVal(cmpTy).getAs<NonLoc>();
-//  SVal cond = svalBuilder.evalBinOp(State, BO_LE, symVal, *zero ,cmpTy);
-//  cond.dump();
-//  ConstraintManager &CM = C.getConstraintManager();
-//
-//  if (isa<ExplicitCastExpr>(E->IgnoreParenImpCasts()))
-//  {
-//    const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(cast<ExplicitCastExpr>(E->IgnoreParenImpCasts())->getSubExpr()->IgnoreParenImpCasts());
-//    const auto *VD = DRE->getDecl();
-//    const MemRegion *R = State->getRegion(cast<VarDecl>(VD), C.getLocationContext());
-//    SVal V = State->getSVal(loc::MemRegionVal(R));
-//    V.dump();
-//  }
-//
-////  std::tie(stateT, stateF) = State->assume(cond);
-////  if (!stateT && stateF)
-////    return true;
-//  // May be negative OR strictly positive
-//  return false;
-//}
+bool isAssumedStrictlyPositive(Optional<NonLoc> symVal, CheckerContext &C) {
 
-bool isUnsafeExpCast(CheckerContext &C, const Expr *E,
+  if (!symVal)
+    return false;
+
+  ProgramStateRef State = C.getState();
+  SValBuilder &SB = C.getSValBuilder();
+  llvm::APInt Zero(32, 0);
+  NonLoc ZeroVal = SB.makeIntVal(Zero, false);
+
+  SVal cond = SB.evalBinOpNN(State, BO_GT, *symVal, ZeroVal,
+                               SB.getConditionType());
+
+  Optional<NonLoc> NLCond = cond.getAs<NonLoc>();
+
+  if(!NLCond)
+    return false;
+
+  ProgramStateRef stateT, stateF;
+  std::tie(stateT, stateF) = State->assume(*NLCond);
+
+  if (stateT && !stateF)
+    return true;
+  else if (!stateT && stateF)
+    return false;
+
+  return false;
+}
+
+bool isUnsafeExpCast(CheckerContext &C, const Expr *E, SVal sym,
                      std::string &Message, std::string &declName) {
 
   assert(isa<ExplicitCastExpr>(E->IgnoreParenImpCasts()) && "Expr is not explicit cast");
@@ -99,7 +78,11 @@ bool isUnsafeExpCast(CheckerContext &C, const Expr *E,
   if (!castDRE)
     return false;
 
-  if (isStrictlyPositive(E, C))
+  if (isStrictlyPositive(sym))
+    return false;
+
+  Optional<NonLoc> NL = sym.getAs<NonLoc>();
+  if (isAssumedStrictlyPositive(NL, C))
     return false;
 
   DEBUG_PRINT("castee is declrefexpr and may evaluate to neg int");
@@ -124,7 +107,7 @@ bool isUnsafeExpCast(CheckerContext &C, const Expr *E,
   return true;
 }
 
-bool isUnsafeImpCast(CheckerContext &C, const ImplicitCastExpr *ICE,
+bool isUnsafeImpCast(CheckerContext &C, const ImplicitCastExpr *ICE, SVal sym,
                      std::string &Message, std::string &declName) {
   if (ICE->getCastKind() != CK_IntegralCast)
     return false;
@@ -143,7 +126,11 @@ bool isUnsafeImpCast(CheckerContext &C, const ImplicitCastExpr *ICE,
   if (!castDRE)
     return false;
 
-  if (isStrictlyPositive(ICE, C))
+  if (isStrictlyPositive(sym))
+    return false;
+
+  Optional<NonLoc> NL = sym.getAs<NonLoc>();
+  if (isAssumedStrictlyPositive(NL, C))
     return false;
 
   DEBUG_PRINT("castee is declrefexpr and may evaluate to neg int");
@@ -168,44 +155,43 @@ bool isUnsafeImpCast(CheckerContext &C, const ImplicitCastExpr *ICE,
   return true;
 }
 
-void TypeCastingVulnChecker::reportUnsafeExpCasts(const Expr *ECE,
+void TypeCastingVulnChecker::reportUnsafeExpCasts(const Expr *ECE, SVal sym,
                                                   CheckerContext &C) const {
   std::string Message = "";
   std::string declName = "";
-  if (isUnsafeExpCast(C, ECE, Message, declName))
+  if (isUnsafeExpCast(C, ECE, sym, Message, declName))
     reportBug(C, ECE->getSourceRange(), Message, declName);
 }
 
 void TypeCastingVulnChecker::reportUnsafeImpCasts(const ImplicitCastExpr *ICE,
+                                                  SVal sym,
                                                   CheckerContext &C) const {
   std::string Message = "";
   std::string declName = "";
-  if (isUnsafeImpCast(C, ICE, Message, declName))
+  if (isUnsafeImpCast(C, ICE, sym, Message, declName))
     reportBug(C, ICE->getSourceRange(), Message, declName);
 }
 
-void TypeCastingVulnChecker::handleAllocArg(const Expr *E, CheckerContext &C) const {
+void TypeCastingVulnChecker::handleAllocArg(const Expr *E, SVal sym,
+                                            CheckerContext &C) const {
 
   const auto *ECE = dyn_cast<ExplicitCastExpr>(E->IgnoreParenImpCasts());
   const auto *ICE = dyn_cast<ImplicitCastExpr>(E);
 
   if (ECE)
-    reportUnsafeExpCasts(E, C);
+    reportUnsafeExpCasts(E, sym, C);
   else if (ICE)
-    reportUnsafeImpCasts(ICE, C);
+    reportUnsafeImpCasts(ICE, sym, C);
 }
 
-void TypeCastingVulnChecker::checkPreStmt(const CallExpr *CE, CheckerContext &C) const {
-
-  const FunctionDecl *FD = C.getCalleeDecl(CE);
-  if (!FD)
-    return;
+void TypeCastingVulnChecker::checkPreCall(const CallEvent &CE,
+                                          CheckerContext &C) const {
 
   std::vector<IdentifierInfo *> IIvec;
   for (auto &i : callNames)
     IIvec.push_back(&C.getASTContext().Idents.get(i));
 
-  const auto *funI = FD->getIdentifier();
+  const auto *funI = CE.getCalleeIdentifier();
   auto iter = std::find(IIvec.begin(), IIvec.end(), funI);
 
   if (iter == IIvec.end())
@@ -216,102 +202,43 @@ void TypeCastingVulnChecker::checkPreStmt(const CallExpr *CE, CheckerContext &C)
   DEBUG_PRINT("Index is: " + std::to_string(index));
 
   if ((index >= MALLOC_START) && (index <= MALLOC_END))
-    handleAllocArg(CE->getArg(0),C);
+    handleAllocArg(CE.getArgExpr(0), CE.getArgSVal(0), C);
   else if ((index >= CALLOC_START) && (index <= CALLOC_END)) {
-    handleAllocArg(CE->getArg(0), C);
-    handleAllocArg(CE->getArg(1), C);
+    handleAllocArg(CE.getArgExpr(0), CE.getArgSVal(0), C);
+    handleAllocArg(CE.getArgExpr(1), CE.getArgSVal(1), C);
   }
   else if ((index >= REALLOC_START) && (index <= REALLOC_END))
-    handleAllocArg(CE->getArg(1), C);
+    handleAllocArg(CE.getArgExpr(1), CE.getArgSVal(1), C);
   else if ((index >= REALLOCARRAY_START) && (index <= REALLOCARRAY_END)) {
-    handleAllocArg(CE->getArg(1), C);
-    handleAllocArg(CE->getArg(2), C);
+    handleAllocArg(CE.getArgExpr(1), CE.getArgSVal(1), C);
+    handleAllocArg(CE.getArgExpr(2), CE.getArgSVal(2), C);
   }
   else if ((index >= MEMCPY_START) && (index <= STRCPY_END))
-    handleAllocArg(CE->getArg(2), C);
+    handleAllocArg(CE.getArgExpr(2), CE.getArgSVal(2), C);
 }
 
-void TypeCastingVulnChecker::checkPreStmt(const ExplicitCastExpr *ECE, CheckerContext &C) const {
-
-//  const auto *CE = static_cast<const CastExpr *>(ECE);
-//  const auto *castSE = CE->getSubExpr();
-//  const auto *ICE = dyn_cast<ImplicitCastExpr>(castSE);
+//ProgramStateRef TypeCastingVulnChecker::evalAssume(ProgramStateRef S, SVal cond,
+//                                                   bool assumption) const {
+//  SymbolRef sym = cond.getAsSymbol();
+//  ConstraintManager &CM = S->getConstraintManager();
+//  if (sym) {
+//    SymExpr::Kind K = sym->getKind();
+//    if ((K >= SymExpr::Kind::BEGIN_BINARYSYMEXPRS) && (K <= SymExpr::Kind::END_BINARYSYMEXPRS)) {
+////	sym->dump();
+//	ProgramStateRef stateT, stateF;
+//	Optional<Loc> loc = cond.getAs<Loc>();
+//	Optional<NonLoc> nonloc = cond.getAs<NonLoc>();
+//	if (loc)
+//	  std::tie(stateT, stateF) = CM.assumeDual(S, *loc);
+//	else if (nonloc)
+//	  std::tie(stateT, stateF) = CM.assumeDual(S, *nonloc);
 //
-//  if (!ICE)
-//    return;
-//
-//  DEBUG_PRINT("Is implicit cast");
-//
-//  // Implicitcastexpr
-//
-//  if (ICE->getCastKind() != CK_LValueToRValue)
-//    return;
-//
-//  DEBUG_PRINT("Involves lvaltorval conv");
-//
-//  // lvaltorval
-//
-//  const auto *castCore = castSE->IgnoreParenImpCasts();
-//  const auto *castDRE = dyn_cast<DeclRefExpr>(castCore);
-//  if (!castDRE)
-//      return;
-//
-//  DEBUG_PRINT("castee is declrefexpr");
-//  // declrefexpr
-//  const auto *VD = castDRE->getDecl();
-//  auto castFromType = VD->getType();
-//  auto castToType = ECE->getTypeAsWritten();
-
-  // Check if cast is on a parmvardecl in a memory allocation function
-//  {
-//    if (isa<ParmVarDecl>(VD)) {
-//	const auto &parentArray = C.getASTContext().getParents(*VD);
-//	if (!parentArray.empty()) {
-//	    for (auto &i : parentArray) {
-//		if (const auto *decl = i.get<Decl>()) {
-//		    if (isa<FunctionDecl>(decl)) {
-//			const auto *fDecl = cast<FunctionDecl>(decl);
-//			const auto *funI = fDecl->getIdentifier();
-//			IdentifierInfo *II_malloc = &C.getASTContext().Idents.get("malloc");
-//			IdentifierInfo *II_calloc = &C.getASTContext().Idents.get("calloc");
-//			if ((funI == II_malloc) || (funI == II_calloc)) {
-//			    if (castFromType != castToType) {
-//				std::string Message = "Unsafe cast from " + castFromType.getAsString() +
-//				    " to " + castToType.getAsString() + " inside a memory allocator";
-//				reportBug(C, ECE->getSourceRange(), Message);
-//				return;
-//			    }
-//			}
-//		    }
-//		}
-//	    }
-//	}
+//	if (stateT && !stateF)
+//	  llvm::errs() << "Assertion of condition\n";
 //    }
 //  }
-
-//  if (castFromType == castToType)
-//    return;
-//
-//  DEBUG_PRINT("castfrom type: " + castFromType.getAsString());
-//  DEBUG_PRINT("castto type: " + castToType.getAsString());
-//
-//  std::string Message = "Cast From " + castFromType.getAsString() + " to " +
-//			castToType.getAsString() + " may be unsafe.";
-//
-//  // Report bug
-//  reportBug(C, ECE->getSourceRange(), Message);
-}
-
-ProgramStateRef TypeCastingVulnChecker::evalAssume(ProgramStateRef S, SVal cond,
-                                                   bool assumption) const {
-  SymbolRef sym = cond.getAsSymbol();
-  if (sym) {
-    SymExpr::Kind K = sym->getKind();
-    if ((K >= SymExpr::Kind::BEGIN_BINARYSYMEXPRS) && (K <= SymExpr::Kind::END_BINARYSYMEXPRS))
-	sym->dump();
-  }
-  return S;
-}
+//  return S;
+//}
 
 void TypeCastingVulnChecker::reportBug(CheckerContext &C, SourceRange SR,
                                        StringRef Message, StringRef declName) const {

@@ -3,6 +3,7 @@
 
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "Diagnostics.h"
 
@@ -16,25 +17,22 @@ namespace Melange {
 
   class Diagnostics;
 
-class TypeCastingVulnChecker : public clang::ento::Checker<clang::ento::check::PreStmt<clang::ExplicitCastExpr>,
-							   clang::ento::check::PreStmt<clang::CallExpr>,
-							   clang::ento::eval::Assume> {
+class TypeCastingVulnChecker : public clang::ento::Checker<clang::ento::check::PreCall> {
 
   mutable Diagnostics Diag;
 
 public:
-  void checkPreStmt(const clang::ExplicitCastExpr *ECE, clang::ento::CheckerContext &C) const;
-  void checkPreStmt(const clang::CallExpr *CE, clang::ento::CheckerContext &C) const;
-  clang::ento::ProgramStateRef evalAssume(clang::ento::ProgramStateRef state, clang::ento::SVal Cond,
-                                          bool Assumption) const;
+  void checkPreCall(const clang::ento::CallEvent &Call, clang::ento::CheckerContext &C) const;
 private:
   mutable std::unique_ptr<clang::ento::BugType> BT;
   void reportBug(clang::ento::CheckerContext &C, clang::SourceRange SR,
                  llvm::StringRef Message, llvm::StringRef declName) const;
-  void handleAllocArg(const clang::Expr *E, clang::ento::CheckerContext &C) const;
-  void reportUnsafeExpCasts(const clang::Expr *ECE,
+  void handleAllocArg(const clang::Expr *E, clang::ento::SVal sval,
+                      clang::ento::CheckerContext &C) const;
+  void reportUnsafeExpCasts(const clang::Expr *ECE, clang::ento::SVal sval,
                             clang::ento::CheckerContext &C) const;
   void reportUnsafeImpCasts(const clang::ImplicitCastExpr *ICE,
+                            clang::ento::SVal sval,
                             clang::ento::CheckerContext &C) const;
 
   const std::vector<std::string> callNames =
