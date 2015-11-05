@@ -17,13 +17,16 @@ namespace Melange {
   class Diagnostics;
 
 class TypeCastingVulnChecker : public clang::ento::Checker<clang::ento::check::PreStmt<clang::ExplicitCastExpr>,
-							   clang::ento::check::PreStmt<clang::CallExpr>> {
+							   clang::ento::check::PreStmt<clang::CallExpr>,
+							   clang::ento::eval::Assume> {
 
   mutable Diagnostics Diag;
 
 public:
   void checkPreStmt(const clang::ExplicitCastExpr *ECE, clang::ento::CheckerContext &C) const;
   void checkPreStmt(const clang::CallExpr *CE, clang::ento::CheckerContext &C) const;
+  clang::ento::ProgramStateRef evalAssume(clang::ento::ProgramStateRef state, clang::ento::SVal Cond,
+                                          bool Assumption) const;
 private:
   mutable std::unique_ptr<clang::ento::BugType> BT;
   void reportBug(clang::ento::CheckerContext &C, clang::SourceRange SR,

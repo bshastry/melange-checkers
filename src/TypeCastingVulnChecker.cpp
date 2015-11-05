@@ -42,6 +42,36 @@ bool isStrictlyPositive(const Expr *E, CheckerContext &C) {
   return false;
 }
 
+//bool isAssumedStrictlyPositive(const Expr *E, CheckerContext &C) {
+//
+//  ProgramStateRef State = C.getState();
+//  SVal symVal = State->getSVal(E, C.getLocationContext());
+//  SValBuilder &svalBuilder = C.getSValBuilder();
+//  QualType cmpTy = svalBuilder.getConditionType();
+//
+//  ProgramStateRef stateT, stateF;
+//  Optional<NonLoc>  symValNL = symVal.getAs<NonLoc>();
+//  Optional<NonLoc> zero = svalBuilder.makeZeroVal(cmpTy).getAs<NonLoc>();
+//  SVal cond = svalBuilder.evalBinOp(State, BO_LE, symVal, *zero ,cmpTy);
+//  cond.dump();
+//  ConstraintManager &CM = C.getConstraintManager();
+//
+//  if (isa<ExplicitCastExpr>(E->IgnoreParenImpCasts()))
+//  {
+//    const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(cast<ExplicitCastExpr>(E->IgnoreParenImpCasts())->getSubExpr()->IgnoreParenImpCasts());
+//    const auto *VD = DRE->getDecl();
+//    const MemRegion *R = State->getRegion(cast<VarDecl>(VD), C.getLocationContext());
+//    SVal V = State->getSVal(loc::MemRegionVal(R));
+//    V.dump();
+//  }
+//
+////  std::tie(stateT, stateF) = State->assume(cond);
+////  if (!stateT && stateF)
+////    return true;
+//  // May be negative OR strictly positive
+//  return false;
+//}
+
 bool isUnsafeExpCast(CheckerContext &C, const Expr *E,
                      std::string &Message, std::string &declName) {
 
@@ -270,6 +300,17 @@ void TypeCastingVulnChecker::checkPreStmt(const ExplicitCastExpr *ECE, CheckerCo
 //
 //  // Report bug
 //  reportBug(C, ECE->getSourceRange(), Message);
+}
+
+ProgramStateRef TypeCastingVulnChecker::evalAssume(ProgramStateRef S, SVal cond,
+                                                   bool assumption) const {
+  SymbolRef sym = cond.getAsSymbol();
+  if (sym) {
+    SymExpr::Kind K = sym->getKind();
+    if ((K >= SymExpr::Kind::BEGIN_BINARYSYMEXPRS) && (K <= SymExpr::Kind::END_BINARYSYMEXPRS))
+	sym->dump();
+  }
+  return S;
 }
 
 void TypeCastingVulnChecker::reportBug(CheckerContext &C, SourceRange SR,
