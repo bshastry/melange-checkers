@@ -68,6 +68,59 @@ void PHPTaintChecker::checkPostStmt(const CallExpr *CE,
   addSourcesPost(CE, C);
 }
 
+void PHPTaintChecker::checkLocation(SVal Loc, bool isLoad, const Stmt *S,
+                                    CheckerContext &C) const {
+  ProgramStateRef State = C.getState();
+
+  /// Bail if we are not loading/storing a tainted value
+  if (!State->isTainted(Loc))
+    return;
+
+  /// Taint is flowing either into a sanitizer or a sink macro
+  /// First, check for former, then latter
+  SourceLocation MacroLoc = cast<Expr>(S)->getExprLoc();
+  StringRef MacroName  = C.getMacroNameOrSpelling(MacroLoc);
+
+  SanHandler evalSanitized = llvm::StringSwitch<SanHandler>(MacroName)
+	  .Case("Z_TYPE", &PHPTaintChecker::postSanTaint)
+	  .Default(nullptr);
+
+  if (evalSanitized) {
+    DEBUG_PRINT("In san");
+    assert(isa<Expr>(S) && "A non-expr statement seen in sanitizer macro");
+    State = (this->*evalSanitized)(Loc, C);
+    if (State != C.getState())
+      C.addTransition(State);
+    return;
+  }
+
+  /// Check if we are in a sink
+  bool isSink = llvm::StringSwitch<bool>(MacroName)
+	  .Case("Z_STRVAL", true)
+	  .Case("Z_ARRVAL", true)
+	  .Default(false);
+
+  if (isSink) {
+    DEBUG_PRINT("In sink");
+    assert(isa<Expr>(S) && "A non-expr statement seen in sink macro");
+    generateReport(cast<Expr>(S), MsgZendTaint, C);
+  }
+}
+
+ProgramStateRef PHPTaintChecker::postSanTaint(SVal sval, CheckerContext &C) const {
+  ProgramStateRef State = C.getState();
+
+  SymbolRef Sym = sval.getAsSymbol();
+  if (!Sym)
+    return State;
+
+  DEBUG_PRINT("Removing taint on ");
+
+  State = State->removeTaint(Sym);
+  assert(State && "State corruption post taint removal");
+  return State;
+}
+
 void PHPTaintChecker::addSourcesPre(const CallExpr *CE,
                                         CheckerContext &C) const {
   ProgramStateRef State = nullptr;
@@ -121,6 +174,7 @@ bool PHPTaintChecker::propagateFromPre(const CallExpr *CE,
 
     // Special handling for the tainted return value.
     if (ArgNum == ReturnValueIndex) {
+      DEBUG_PRINT("Adding taint on return value");
       State = State->addTaint(CE, C.getLocationContext());
       continue;
     }
@@ -131,8 +185,10 @@ bool PHPTaintChecker::propagateFromPre(const CallExpr *CE,
       return false;
     const Expr* Arg = CE->getArg(ArgNum);
     SymbolRef Sym = getPointedToSymbol(C, Arg);
-    if (Sym)
+    if (Sym) {
+      DEBUG_PRINT("Adding taint on pointer arg");
       State = State->addTaint(Sym);
+    }
   }
 
   // Clear up the taint info from the state.
@@ -191,6 +247,7 @@ bool PHPTaintChecker::checkPre(const CallExpr *CE, CheckerContext &C) const{
 
 SymbolRef PHPTaintChecker::getPointedToSymbol(CheckerContext &C,
                                                   const Expr* Arg) {
+
   ProgramStateRef State = C.getState();
   SVal AddrVal = State->getSVal(Arg->IgnoreParens(), C.getLocationContext());
   if (AddrVal.isUnknownOrUndef())
@@ -275,9 +332,6 @@ PHPTaintChecker::TaintPropagationRule::process(const CallExpr *CE,
   return State;
 }
 
-
-// If argument 0 (file descriptor) is tainted, all arguments except for arg 0
-// and arg 1 should get taint.
 ProgramStateRef PHPTaintChecker::prePHPTaintSources(const CallExpr *CE,
                                                    CheckerContext &C) const {
   ProgramStateRef State = C.getState();
@@ -308,6 +362,7 @@ ProgramStateRef PHPTaintChecker::prePHPTaintSources(const CallExpr *CE,
 
 ProgramStateRef PHPTaintChecker::postRetTaint(const CallExpr *CE,
                                                   CheckerContext &C) const {
+  DEBUG_PRINT("Adding taint on return value post call");
   return C.getState()->addTaint(CE, C.getLocationContext());
 }
 
@@ -340,26 +395,45 @@ bool PHPTaintChecker::generateReportIfTainted(const Expr *E,
   return false;
 }
 
+void PHPTaintChecker::generateReport(const Expr *E, const char Msg[],
+                                     CheckerContext &C) const {
+  assert(E);
+
+  // Generate diagnostic.
+  if (ExplodedNode *N = C.addTransition()) {
+    initBugType();
+    BugReport *report = new BugReport(*BT, Msg, N);
+    report->addRange(E->getSourceRange());
+
+    {
+      Diag.encodeBugInfo("", C);
+      for (auto &i : Diag.getBugInfoDiag())
+	report->addExtraText(i);
+    }
+
+    C.emitReport(report);
+  }
+}
+
 bool PHPTaintChecker::checkPHPSinks(const CallExpr *CE, StringRef Name,
                                     CheckerContext &C) const {
-  // TODO: It might make sense to run this check on demand. In some cases,
-  // we should check if the environment has been cleansed here. We also might
-  // need to know if the user was reset before these calls(seteuid).
-  unsigned ArgNum = llvm::StringSwitch<unsigned>(Name)
-    .Case("ZF_STRVAL", 0)
-    .Case("ZF_STRVAL_P", 0)
-    .Case("ZF_STRVAL_PP", 0)
-    .Case("ZF_ARRVAL", 0)
-    .Case("ZF_ARRVAL_P", 0)
-    .Case("ZF_ARRVAL_PP", 0)
-    .Default(UINT_MAX);
+  // TODO: Populate this with PHP sink functions if any
 
-  if (ArgNum == UINT_MAX || CE->getNumArgs() < (ArgNum + 1))
-    return false;
-
-  if (generateReportIfTainted(CE->getArg(ArgNum),
-                              MsgZendTaint, C))
-    return true;
+//  unsigned ArgNum = llvm::StringSwitch<unsigned>(Name)
+//    .Case("ZF_STRVAL", 0)
+//    .Case("ZF_STRVAL_P", 0)
+//    .Case("ZF_STRVAL_PP", 0)
+//    .Case("ZF_ARRVAL", 0)
+//    .Case("ZF_ARRVAL_P", 0)
+//    .Case("ZF_ARRVAL_PP", 0)
+//    .Default(UINT_MAX);
+//
+//  if (ArgNum == UINT_MAX || CE->getNumArgs() < (ArgNum + 1))
+//    return false;
+//
+//  if (generateReportIfTainted(CE->getArg(ArgNum),
+//                              MsgZendTaint, C))
+//    return true;
 
   return false;
 }

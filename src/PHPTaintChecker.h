@@ -22,20 +22,21 @@ namespace Melange {
   class Diagnostics;
 
 class PHPTaintChecker : public clang::ento::Checker<clang::ento::check::PreStmt<clang::CallExpr>,
-						    clang::ento::check::PostStmt<clang::CallExpr>> {
+						    clang::ento::check::PostStmt<clang::CallExpr>,
+						    clang::ento::check::Location> {
 
   mutable Diagnostics Diag;
 
 public:
   void checkPreStmt(const clang::CallExpr *Call, clang::ento::CheckerContext &C) const;
   void checkPostStmt(const clang::CallExpr *Call, clang::ento::CheckerContext &C) const;
+  void checkLocation(clang::ento::SVal Loc, bool IsLoad, const clang::Stmt *S,
+                     clang::ento::CheckerContext &) const;
 
   static void *getTag() { static int Tag; return &Tag; }
 
 private:
   mutable std::unique_ptr<clang::ento::BugType> BT;
-  void reportBug(clang::ento::CheckerContext &C, clang::SourceRange SR,
-                 llvm::StringRef Message, llvm::StringRef declName) const;
 
   inline void initBugType() const {
     if (!BT)
@@ -63,6 +64,10 @@ private:
   /// Functions defining the attack surface.
   typedef clang::ento::ProgramStateRef (PHPTaintChecker::*FnCheck)(const clang::CallExpr *,
                                                        clang::ento::CheckerContext &C) const;
+
+  /// Functions handling macro madness in PHP
+  typedef clang::ento::ProgramStateRef (PHPTaintChecker::*SanHandler)(clang::ento::SVal sym,
+                                                       clang::ento::CheckerContext &C) const;
   clang::ento::ProgramStateRef postRetTaint(const clang::CallExpr *CE,
                                             clang::ento::CheckerContext &C) const;
 
@@ -72,9 +77,15 @@ private:
   bool checkPHPSinks(const clang::CallExpr *CE, llvm::StringRef Name,
                      clang::ento::CheckerContext &C) const;
 
+  clang::ento::ProgramStateRef postSanTaint(clang::ento::SVal sym,
+                                            clang::ento::CheckerContext &C) const;
+
   /// Generate a report if the expression is tainted or points to tainted data.
   bool generateReportIfTainted(const clang::Expr *E, const char Msg[],
                                clang::ento::CheckerContext &C) const;
+
+  void generateReport(const clang::Expr *E, const char Msg[],
+                      clang::ento::CheckerContext &C) const;
 
 
   typedef llvm::SmallVector<unsigned, 2> ArgVector;
