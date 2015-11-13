@@ -105,24 +105,29 @@ private:
     /// List of arguments which should be tainted on function return.
     ArgVector DstArgs;
     // TODO: Check if using other data structures would be more optimal.
+    bool Sanitize;
 
-    TaintPropagationRule() {}
+    TaintPropagationRule(): Sanitize(false) {}
 
     TaintPropagationRule(unsigned SArg,
-                         unsigned DArg, bool TaintRet = false) {
+                         unsigned DArg, bool TaintRet = false,
+                         bool San = false) {
       SrcArgs.push_back(SArg);
       DstArgs.push_back(DArg);
       if (TaintRet)
         DstArgs.push_back(ReturnValueIndex);
+      Sanitize = San;
     }
 
     TaintPropagationRule(unsigned SArg1, unsigned SArg2,
-                         unsigned DArg, bool TaintRet = false) {
+                         unsigned DArg, bool TaintRet = false,
+                         bool San = false) {
       SrcArgs.push_back(SArg1);
       SrcArgs.push_back(SArg2);
       DstArgs.push_back(DArg);
       if (TaintRet)
         DstArgs.push_back(ReturnValueIndex);
+      Sanitize = San;
     }
 
     /// Get the propagation rule for a given function.
@@ -148,12 +153,19 @@ private:
                State->isTainted(getPointedToSymbol(C, E))));
     }
 
+    inline bool isSanRule() const { return Sanitize; }
+
     /// \brief Pre-process a function which propagates taint according to the
     /// taint rule.
     clang::ento::ProgramStateRef process(const clang::CallExpr *CE,
                                          clang::ento::CheckerContext &C) const;
 
   };
+
+  static inline TaintPropagationRule getRule(llvm::StringRef Name,
+                                      clang::ento::CheckerContext &C) {
+    return TaintPropagationRule::getTaintPropagationRule(Name, C);
+  }
 };
 
 } // end of Melange namespace

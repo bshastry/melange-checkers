@@ -30,6 +30,35 @@ REGISTER_SET_WITH_PROGRAMSTATE(TaintArgsOnPostVisit, unsigned)
 static const char MsgZendTaint[] =
   "Untrusted data in Zend macro ";
 
+StringRef getCallName(const CallExpr *CE, CheckerContext &C) {
+  const FunctionDecl *FDecl = C.getCalleeDecl(CE);
+  if (!FDecl || FDecl->getKind() != Decl::Function)
+    return StringRef();
+
+  StringRef Name = C.getCalleeName(FDecl);
+  if (Name.empty())
+    return StringRef();
+
+  return Name;
+}
+
+StringRef getCallNameFromArgExpr(const Stmt *S, CheckerContext &C) {
+  const auto &parents = C.getASTContext().getParents(*S);
+
+  if (parents.empty())
+    return StringRef();
+
+  const Stmt *parent = parents.front().get<Stmt>();
+  if (!parent)
+    return StringRef();
+
+  const CallExpr *CE = dyn_cast<CallExpr>(parent);
+  if (!CE)
+    return StringRef();
+
+  return getCallName(CE, C);
+}
+
 PHPTaintChecker::TaintPropagationRule
 PHPTaintChecker::TaintPropagationRule::getTaintPropagationRule(StringRef Name,
                                               CheckerContext &C) {
@@ -38,11 +67,8 @@ PHPTaintChecker::TaintPropagationRule::getTaintPropagationRule(StringRef Name,
 
   // Check for exact name match for functions without builtin substitutes.
   TaintPropagationRule Rule = llvm::StringSwitch<TaintPropagationRule>(Name)
-//    .Case("zend_hash_find", TaintPropagationRule(InvalidArgIndex, 3))
-//    .Case("zend_hash_quick_find", TaintPropagationRule(InvalidArgIndex, 4))
-//    .Case("zend_hash_index_find", TaintPropagationRule(InvalidArgIndex, 2))
-//    .Case("zend_read_property", TaintPropagationRule(InvalidArgIndex, ReturnValueIndex))
-//    .Case("zend_read_static_property", TaintPropagationRule(InvalidArgIndex, ReturnValueIndex))
+    .Case("convert_to_string", TaintPropagationRule(0, 0, false, true))
+    .Case("convert_to_array", TaintPropagationRule(0, 0, false, true))
     .Default(TaintPropagationRule());
 
   if (!Rule.isNull())
@@ -53,6 +79,7 @@ PHPTaintChecker::TaintPropagationRule::getTaintPropagationRule(StringRef Name,
 
 void PHPTaintChecker::checkPreStmt(const CallExpr *CE,
                                    CheckerContext &C) const {
+  DEBUG_PRINT("In PreStmt<CallExpr>");
   // Check for errors first.
   if (checkPre(CE, C))
     return;
@@ -78,11 +105,20 @@ void PHPTaintChecker::checkLocation(SVal Loc, bool isLoad, const Stmt *S,
 
   /// Taint is flowing either into a sanitizer or a sink macro
   /// First, check for former, then latter
+  StringRef SanName;
   SourceLocation MacroLoc = cast<Expr>(S)->getExprLoc();
-  StringRef MacroName  = C.getMacroNameOrSpelling(MacroLoc);
 
-  SanHandler evalSanitized = llvm::StringSwitch<SanHandler>(MacroName)
+  if (MacroLoc.isMacroID())
+    SanName = C.getMacroNameOrSpelling(MacroLoc);
+  else
+    SanName = getCallNameFromArgExpr(S, C);
+
+  if (SanName.empty())
+    return;
+
+  SanHandler evalSanitized = llvm::StringSwitch<SanHandler>(SanName)
 	  .Case("Z_TYPE", &PHPTaintChecker::postSanTaint)
+	  .Case("convert_to_string", &PHPTaintChecker::postSanTaint)
 	  .Default(nullptr);
 
   if (evalSanitized) {
@@ -95,7 +131,7 @@ void PHPTaintChecker::checkLocation(SVal Loc, bool isLoad, const Stmt *S,
   }
 
   /// Check if we are in a sink
-  bool isSink = llvm::StringSwitch<bool>(MacroName)
+  bool isSink = llvm::StringSwitch<bool>(SanName)
 	  .Case("Z_STRVAL", true)
 	  .Case("Z_ARRVAL", true)
 	  .Default(false);
@@ -114,7 +150,7 @@ ProgramStateRef PHPTaintChecker::postSanTaint(SVal sval, CheckerContext &C) cons
   if (!Sym)
     return State;
 
-  DEBUG_PRINT("Removing taint on ");
+  DEBUG_PRINT("Removing taint");
 
   State = State->removeTaint(Sym);
   assert(State && "State corruption post taint removal");
@@ -124,11 +160,8 @@ ProgramStateRef PHPTaintChecker::postSanTaint(SVal sval, CheckerContext &C) cons
 void PHPTaintChecker::addSourcesPre(const CallExpr *CE,
                                         CheckerContext &C) const {
   ProgramStateRef State = nullptr;
-  const FunctionDecl *FDecl = C.getCalleeDecl(CE);
-  if (!FDecl || FDecl->getKind() != Decl::Function)
-    return;
 
-  StringRef Name = C.getCalleeName(FDecl);
+  StringRef Name = getCallName(CE, C);
   if (Name.empty())
     return;
 
@@ -142,6 +175,8 @@ void PHPTaintChecker::addSourcesPre(const CallExpr *CE,
     C.addTransition(State);
     return;
   }
+
+  DEBUG_PRINT("Generating taint on vulnerable source APIs");
 
   // Otherwise, check if we have custom pre-processing implemented.
   FnCheck evalFunction = llvm::StringSwitch<FnCheck>(Name)
@@ -160,6 +195,7 @@ void PHPTaintChecker::addSourcesPre(const CallExpr *CE,
 bool PHPTaintChecker::propagateFromPre(const CallExpr *CE,
                                            CheckerContext &C) const {
   ProgramStateRef State = C.getState();
+  StringRef Name = getCallName(CE, C);
 
   // Depending on what was tainted at pre-visit, we determined a set of
   // arguments which should be tainted after the function returns. These are
@@ -184,11 +220,23 @@ bool PHPTaintChecker::propagateFromPre(const CallExpr *CE,
     if (CE->getNumArgs() < (ArgNum + 1))
       return false;
     const Expr* Arg = CE->getArg(ArgNum);
+    DEBUG_PRINT("Getting pointed to symbol");
     SymbolRef Sym = getPointedToSymbol(C, Arg);
+
+    PHPTaintChecker::TaintPropagationRule Rule = getRule(Name, C);
+    DEBUG_PRINT(Name);
     if (Sym) {
-      DEBUG_PRINT("Adding taint on pointer arg");
-      State = State->addTaint(Sym);
+      std::string info;
+      (Rule.isSanRule() ? (info = "Removing taint in post call") :
+			  (info = "Adding taint in post call"));
+      DEBUG_PRINT(info);
+      if (Rule.isSanRule())
+	State = State->removeTaint(Sym);
+      else
+	State = State->addTaint(Sym);
     }
+    else
+      DEBUG_PRINT("Sym null");
   }
 
   // Clear up the taint info from the state.
@@ -231,11 +279,8 @@ void PHPTaintChecker::addSourcesPost(const CallExpr *CE,
 /// Check taint before processing function call
 bool PHPTaintChecker::checkPre(const CallExpr *CE, CheckerContext &C) const{
 
-  const FunctionDecl *FDecl = C.getCalleeDecl(CE);
-  if (!FDecl || FDecl->getKind() != Decl::Function)
-    return false;
-
-  StringRef Name = C.getCalleeName(FDecl);
+  DEBUG_PRINT("Checking taint pre call");
+  StringRef Name = getCallName(CE, C);
   if (Name.empty())
     return false;
 
@@ -248,15 +293,18 @@ bool PHPTaintChecker::checkPre(const CallExpr *CE, CheckerContext &C) const{
 SymbolRef PHPTaintChecker::getPointedToSymbol(CheckerContext &C,
                                                   const Expr* Arg) {
 
+  DEBUG_PRINT("Unknown or undefined address");
   ProgramStateRef State = C.getState();
   SVal AddrVal = State->getSVal(Arg->IgnoreParens(), C.getLocationContext());
   if (AddrVal.isUnknownOrUndef())
     return nullptr;
 
+  DEBUG_PRINT("Address not an lvalue");
   Optional<Loc> AddrLoc = AddrVal.getAs<Loc>();
   if (!AddrLoc)
     return nullptr;
 
+  DEBUG_PRINT("Obtaining symbolref of address");
   const PointerType *ArgTy =
     dyn_cast<PointerType>(Arg->getType().getCanonicalType().getTypePtr());
   SVal Val = State->getSVal(*AddrLoc,
@@ -336,11 +384,7 @@ ProgramStateRef PHPTaintChecker::prePHPTaintSources(const CallExpr *CE,
                                                    CheckerContext &C) const {
   ProgramStateRef State = C.getState();
 
-  const FunctionDecl *FDecl = C.getCalleeDecl(CE);
-  if (!FDecl || FDecl->getKind() != Decl::Function)
-    return State;
-
-  StringRef Name = C.getCalleeName(FDecl);
+  StringRef Name = getCallName(CE, C);
   if (Name.empty())
     return State;
 
@@ -356,6 +400,8 @@ ProgramStateRef PHPTaintChecker::prePHPTaintSources(const CallExpr *CE,
   /// Sanity check
   assert((taintArgNum < CE->getNumArgs() || taintArgNum == ReturnValueIndex) &&
          "Taint generation rule invalid");
+
+  DEBUG_PRINT("Add taint arg info to checker state");
 
   return State->add<TaintArgsOnPostVisit>(taintArgNum);
 }

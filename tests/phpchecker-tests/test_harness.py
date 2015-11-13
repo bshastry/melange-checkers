@@ -53,6 +53,9 @@ class TestBasic(SimpleTester):
     def test_unsanstr(self):
         self.assertEqual(testinput('test-unsanstr.c'), True,
                          'Test on test-unsanstr.c failed')
+    def test_sancall(self):
+        self.assertEqual(testinput('test-sancall.c'), True,
+                         'Test on test-sancall.c failed')
 
 if __name__ == '__main__':
     unittest.main()
