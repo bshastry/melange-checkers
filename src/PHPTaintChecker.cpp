@@ -69,6 +69,7 @@ PHPTaintChecker::TaintPropagationRule::getTaintPropagationRule(StringRef Name,
   TaintPropagationRule Rule = llvm::StringSwitch<TaintPropagationRule>(Name)
     .Case("convert_to_string", TaintPropagationRule(0, 0, false, true))
     .Case("convert_to_array", TaintPropagationRule(0, 0, false, true))
+    .Case("convert_to_long", TaintPropagationRule(0, 0, false, true))
     .Default(TaintPropagationRule());
 
   if (!Rule.isNull())
@@ -119,6 +120,8 @@ void PHPTaintChecker::checkLocation(SVal Loc, bool isLoad, const Stmt *S,
   SanHandler evalSanitized = llvm::StringSwitch<SanHandler>(SanName)
 	  .Case("Z_TYPE", &PHPTaintChecker::postSanTaint)
 	  .Case("convert_to_string", &PHPTaintChecker::postSanTaint)
+	  .Case("convert_to_long", &PHPTaintChecker::postSanTaint)
+	  .Case("convert_to_array", &PHPTaintChecker::postSanTaint)
 	  .Default(nullptr);
 
   if (evalSanitized) {
@@ -183,6 +186,8 @@ void PHPTaintChecker::addSourcesPre(const CallExpr *CE,
     .Case("zend_hash_find", &PHPTaintChecker::prePHPTaintSources)
     .Case("zend_hash_quick_find", &PHPTaintChecker::prePHPTaintSources)
     .Case("zend_hash_index_find", &PHPTaintChecker::prePHPTaintSources)
+    .Case("_ldap_hash_fetch", &PHPTaintChecker::prePHPTaintSources)
+    .Case("php_stream_context_get_option", &PHPTaintChecker::prePHPTaintSources)
     .Default(nullptr);
   // Check and evaluate the call.
   if (evalFunction)
@@ -392,6 +397,8 @@ ProgramStateRef PHPTaintChecker::prePHPTaintSources(const CallExpr *CE,
       .Case("zend_hash_find", 3)
       .Case("zend_hash_quick_find", 4)
       .Case("zend_hash_index_find", 2)
+      .Case("_ldap_hash_fetch", 2)
+      .Case("php_stream_context_get_option", 3)
       .Default(InvalidArgIndex);
 
   if (taintArgNum == InvalidArgIndex)
