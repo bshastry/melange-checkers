@@ -1,0 +1,25 @@
+test-unsanstr.c:23:10: warning: Untrusted data in Zend macro 
+   tmp = Z_STRVAL_PP(z);
+         ^
+./testmacro.h:29:41: note: expanded from macro 'Z_STRVAL_PP'
+#define Z_STRVAL_PP(zvalpp)     Z_STRVAL_P(*zvalpp)
+                                           ^
+./testmacro.h:28:38: note: expanded from macro 'Z_STRVAL_P'
+#define Z_STRVAL_P(zvalp)       Z_STRVAL(*zvalp)
+                                          ^
+./testmacro.h:27:27: note: expanded from macro 'Z_STRVAL'
+#define Z_STRVAL(zval)          (zval).value.str.val
+                                 ^
+test-unsanstr.c:23:10: warning: Untrusted data in Zend macro 
+   tmp = Z_STRVAL_PP(z);
+         ^~~~~~~~~~~~~~
+./testmacro.h:29:30: note: expanded from macro 'Z_STRVAL_PP'
+#define Z_STRVAL_PP(zvalpp)     Z_STRVAL_P(*zvalpp)
+                                ^~~~~~~~~~~~~~~~~~~
+./testmacro.h:28:28: note: expanded from macro 'Z_STRVAL_P'
+#define Z_STRVAL_P(zvalp)       Z_STRVAL(*zvalp)
+                                ^~~~~~~~~~~~~~~~
+./testmacro.h:27:43: note: expanded from macro 'Z_STRVAL'
+#define Z_STRVAL(zval)          (zval).value.str.val
+                                ~~~~~~~~~~~~~~~~~^~~
+2 warnings generated.
