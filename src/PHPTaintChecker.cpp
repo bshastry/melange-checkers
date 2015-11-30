@@ -1,19 +1,3 @@
-//== PHPTaintChecker.cpp ----------------------------------- -*- C++ -*--=//
-//
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
-//===----------------------------------------------------------------------===//
-//
-// This checker defines the attack surface for PHP taint propagation.
-//
-// The taint information produced by it might be useful to other checkers. For
-// example, checkers should report errors which involve tainted data more
-// aggressively, even if the involved symbols are under constrained.
-//
-//===----------------------------------------------------------------------===//
 #include "PHPTaintChecker.h"
 #include "llvm/ADT/StringSwitch.h"
 
